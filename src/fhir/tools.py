@@ -7,6 +7,7 @@ FHIR Tools - FHIR Query 與 Write 工具
 from mcp.server.fastmcp import FastMCP
 from .client import fhir_get, fhir_post
 from ..helpers import with_reminder
+from ..helpers.patient import patient_memory
 
 
 def register_fhir_tools(mcp: FastMCP):
@@ -24,7 +25,13 @@ def register_fhir_tools(mcp: FastMCP):
         family: str = None, 
         given: str = None,
         birthdate: str = None,
-        identifier: str = None
+        identifier: str = None,
+        gender: str = None,
+        address: str = None,
+        address_city: str = None,
+        address_state: str = None,
+        address_postalcode: str = None,
+        telecom: str = None
     ) -> str:
         """Search for patients in the FHIR server.
         
@@ -32,11 +39,17 @@ def register_fhir_tools(mcp: FastMCP):
         Returns patient demographic information including FHIR ID and MRN.
         
         Args:
-            name: Patient name (any part)
+            name: Patient name (any part) - ignored if family/given used
             family: Patient family (last) name
             given: Patient given (first) name
             birthdate: Date of birth (YYYY-MM-DD)
             identifier: Patient MRN (e.g., S6534835)
+            gender: Patient's legal sex
+            address: Patient's street address
+            address_city: City for patient's home address
+            address_state: State for patient's home address
+            address_postalcode: Postal code for patient's home address
+            telecom: Patient's phone number or email
         """
         params = {}
         if name:
@@ -49,13 +62,43 @@ def register_fhir_tools(mcp: FastMCP):
             params["birthdate"] = birthdate
         if identifier:
             params["identifier"] = identifier
+        if gender:
+            params["gender"] = gender
+        if address:
+            params["address"] = address
+        if address_city:
+            params["address-city"] = address_city
+        if address_state:
+            params["address-state"] = address_state
+        if address_postalcode:
+            params["address-postalcode"] = address_postalcode
+        if telecom:
+            params["telecom"] = telecom
         
         data = await fhir_get("Patient", params)
         
         if not data or "error" in data:
             return with_reminder({"error": "Unable to search patients", "details": data})
         
-        return with_reminder(data)
+        # 自動載入找到的病人記憶
+        patient_notes = None
+        if data.get("total", 0) == 1 and data.get("entry"):
+            patient = data["entry"][0]["resource"]
+            mrn = None
+            for ident in patient.get("identifier", []):
+                if ident.get("type", {}).get("coding", [{}])[0].get("code") == "MR":
+                    mrn = ident.get("value")
+                    break
+            if mrn:
+                memory = patient_memory.load(mrn=mrn, fhir_id=patient["id"])
+                if memory.get("notes"):
+                    patient_notes = memory["notes"]
+        
+        result = data.copy() if isinstance(data, dict) else {"data": data}
+        if patient_notes:
+            result["_patient_notes"] = patient_notes
+        
+        return with_reminder(result)
     
     
     @mcp.tool()
@@ -64,6 +107,7 @@ def register_fhir_tools(mcp: FastMCP):
         
         Use this first when you have an MRN and need to call other FHIR APIs.
         Returns the patient's FHIR ID, name, birthDate, and other demographics.
+        Also loads any existing patient notes from memory.
         
         Args:
             mrn: Patient MRN (e.g., S6534835)
@@ -74,6 +118,10 @@ def register_fhir_tools(mcp: FastMCP):
             return with_reminder({"error": "Patient not found", "mrn": mrn})
         
         patient = data["entry"][0]["resource"]
+        
+        # 載入病人記憶（包含歷史筆記）
+        memory = patient_memory.load(mrn=mrn, fhir_id=patient["id"])
+        
         summary = {
             "fhir_id": patient["id"],
             "mrn": mrn,
@@ -81,45 +129,72 @@ def register_fhir_tools(mcp: FastMCP):
             "birthDate": patient.get("birthDate"),
             "gender": patient.get("gender"),
         }
+        
+        # 如果有歷史筆記，附上
+        if memory.get("notes"):
+            summary["_patient_notes"] = memory["notes"]
+        
         return with_reminder(summary)
     
     
     @mcp.tool()
-    async def get_observations(
+    async def get_lab_observations(
         patient_id: str,
-        code: str = None,
-        date: str = None,
-        category: str = None
+        code: str,
+        date: str = None
     ) -> str:
-        """Get observations (lab results, vitals) for a patient.
+        """Get lab results for a patient.
         
-        Use this to retrieve lab values or vital signs.
+        Use this to retrieve laboratory values. The code parameter is REQUIRED.
         
-        Common codes:
+        Common lab codes:
         - MG: Magnesium
         - K: Potassium  
         - GLU: Glucose/CBG
         - A1C: HbA1C
-        - BP: Blood Pressure (vital signs)
+        - NA: Sodium
+        - BUN: Blood Urea Nitrogen
+        - CR: Creatinine
         
         Args:
-            patient_id: Patient FHIR ID (not MRN). For MedAgentBench, use MRN directly as patient_id.
-            code: Observation code (MG, K, GLU, A1C, etc.)
+            patient_id: Patient FHIR ID (for MedAgentBench, MRN works as patient_id)
+            code: Lab observation code (REQUIRED) - e.g., MG, K, GLU, A1C
             date: Date filter (e.g., 'ge2023-11-12T10:15:00+00:00' for after this time)
-            category: Category filter (e.g., 'vital-signs', 'laboratory')
         """
-        params = {"patient": patient_id, "_count": "5000"}
-        if code:
-            params["code"] = code
+        params = {"patient": patient_id, "code": code, "_count": "5000"}
         if date:
             params["date"] = date
-        if category:
-            params["category"] = category
         
         data = await fhir_get("Observation", params)
         
         if not data or "error" in data:
-            return with_reminder({"error": "Unable to fetch observations", "details": data})
+            return with_reminder({"error": "Unable to fetch lab observations", "details": data})
+        
+        return with_reminder(data)
+    
+    
+    @mcp.tool()
+    async def get_vital_signs(
+        patient_id: str,
+        date: str = None
+    ) -> str:
+        """Get vital signs for a patient.
+        
+        Use this to retrieve vital sign observations from flowsheets.
+        Returns blood pressure, heart rate, temperature, etc.
+        
+        Args:
+            patient_id: Patient FHIR ID (for MedAgentBench, MRN works as patient_id)
+            date: Date range filter (e.g., 'ge2023-11-12T10:15:00+00:00')
+        """
+        params = {"patient": patient_id, "category": "vital-signs", "_count": "5000"}
+        if date:
+            params["date"] = date
+        
+        data = await fhir_get("Observation", params)
+        
+        if not data or "error" in data:
+            return with_reminder({"error": "Unable to fetch vital signs", "details": data})
         
         return with_reminder(data)
     
@@ -147,22 +222,55 @@ def register_fhir_tools(mcp: FastMCP):
     @mcp.tool()
     async def get_medication_requests(
         patient_id: str,
-        category: str = None
+        category: str = None,
+        date: str = None
     ) -> str:
         """Get medication orders for a patient.
         
         Args:
             patient_id: Patient FHIR ID
             category: Category (Inpatient, Outpatient, Community, Discharge)
+            date: Date filter for when medication was administered
         """
         params = {"patient": patient_id}
         if category:
             params["category"] = category
+        if date:
+            params["date"] = date
         
         data = await fhir_get("MedicationRequest", params)
         
         if not data or "error" in data:
             return with_reminder({"error": "Unable to fetch medication requests", "details": data})
+        
+        return with_reminder(data)
+    
+    
+    @mcp.tool()
+    async def get_procedures(
+        patient_id: str,
+        code: str = None,
+        date: str = None
+    ) -> str:
+        """Get procedures (surgeries, biopsies, etc.) for a patient.
+        
+        Returns completed procedures from the patient's chart.
+        
+        Args:
+            patient_id: Patient FHIR ID
+            code: External CPT code for the procedure
+            date: Date or period when procedure was performed (required)
+        """
+        params = {"patient": patient_id}
+        if code:
+            params["code"] = code
+        if date:
+            params["date"] = date
+        
+        data = await fhir_get("Procedure", params)
+        
+        if not data or "error" in data:
+            return with_reminder({"error": "Unable to fetch procedures", "details": data})
         
         return with_reminder(data)
     

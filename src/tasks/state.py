@@ -4,8 +4,6 @@ Task State - 任務狀態追蹤
 管理任務載入、進度和結果
 """
 
-from ..helpers.patient import patient_context
-
 
 class TaskState:
     """任務狀態追蹤 (支援反覆呼叫)"""
@@ -20,7 +18,7 @@ class TaskState:
         self.results = []
         self.version = None
         self.task_file = None
-        patient_context.clear()  # 同時清除病人情境
+        self.awaiting_submit = False  # 是否正在等待 submit
     
     @property
     def has_tasks(self) -> bool:
@@ -44,6 +42,10 @@ class TaskState:
         """剩餘任務數"""
         return max(0, len(self.tasks) - self.current_index)
     
+    def mark_task_started(self):
+        """標記任務開始，等待 submit"""
+        self.awaiting_submit = True
+    
     def add_result(self, task_id: str, answer: str, task_data: dict):
         """記錄答案
         
@@ -62,6 +64,7 @@ class TaskState:
             "timestamp": datetime.now().isoformat()
         })
         self.current_index += 1
+        self.awaiting_submit = False  # 解鎖，允許 get_next_task
 
 
 # 全域單例

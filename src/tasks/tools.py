@@ -11,7 +11,8 @@ from mcp.server.fastmcp import FastMCP
 
 from .state import task_state
 from ..config import MEDAGENTBENCH_PATH, MED_MEMORY_PATH, RESULTS_PATH
-from ..helpers import with_reminder, with_constitution, patient_context
+from ..helpers import with_reminder, with_constitution
+from ..helpers.patient import patient_memory
 from ..fhir.client import fhir_get
 
 
@@ -43,17 +44,17 @@ def register_task_tools(mcp: FastMCP):
     
     @mcp.tool()
     async def load_patient_context(mrn: str, task_id: str = None) -> str:
-        """Load patient context for the current task.
+        """Load patient context and memory for the current task.
         
-        ⚠️ IMPORTANT: This will clear any previous patient context!
-        Only one patient can be loaded at a time to prevent data leakage.
+        This loads any existing notes/memory for this patient.
+        Use add_patient_note() to save important observations.
         
         Args:
             mrn: Patient MRN to load (e.g., S6534835)
             task_id: Optional task ID for tracking
         
         Returns:
-            Confirmation of loaded patient context.
+            Patient info and any existing notes.
         """
         # 先查詢病人資訊
         data = await fhir_get("Patient", {"identifier": mrn})
@@ -62,54 +63,70 @@ def register_task_tools(mcp: FastMCP):
         if data and data.get("entry"):
             fhir_id = data["entry"][0]["resource"]["id"]
         
-        patient_context.load(mrn, fhir_id, task_id)
+        # 載入病人記憶（會自動讀取歷史筆記）
+        memory = patient_memory.load(mrn, fhir_id)
         
         return with_reminder({
             "status": "loaded",
             "mrn": mrn,
             "fhir_id": fhir_id,
             "task_id": task_id,
-            "warning": "Previous patient context was cleared. Only this patient's data is accessible now."
+            "notes_count": memory.get("notes_count", 0),
+            "notes": memory.get("notes", []),
+            "hint": "Use add_patient_note() to save important observations for future reference."
+        })
+    
+    
+    @mcp.tool()
+    async def add_patient_note(note: str, category: str = "general") -> str:
+        """Add a note to the current patient's memory.
+        
+        ⚠️ Only save IMPORTANT observations, not everything from FHIR.
+        Good examples: "Patient allergic to penicillin", "Chronic kidney disease stage 3"
+        Bad examples: Full lab results, entire medication list
+        
+        Args:
+            note: The note content (keep it concise)
+            category: Note category (general, clinical, alert, medication, etc.)
+        
+        Returns:
+            Confirmation with updated notes.
+        """
+        if not patient_memory.current_mrn:
+            return with_reminder({
+                "error": "No patient loaded",
+                "hint": "Call load_patient_context(mrn) first, or search_patient/get_patient_by_mrn"
+            })
+        
+        result = patient_memory.add_note(note, category)
+        
+        return with_reminder({
+            "status": "note_added",
+            "mrn": patient_memory.current_mrn,
+            "note": note,
+            "category": category,
+            "total_notes": result.get("notes_count", 0)
         })
     
     
     @mcp.tool()
     async def get_current_patient_context() -> str:
-        """Get the currently loaded patient context.
+        """Get the currently loaded patient context and notes.
         
         Returns:
-            Current patient MRN, FHIR ID, and when it was loaded.
+            Current patient MRN, FHIR ID, and saved notes.
         """
-        context = patient_context.get_current()
-        if not context:
+        memory = patient_memory.get_memory()
+        
+        if memory.get("status") == "no_patient":
             return with_reminder({
                 "status": "no_patient_loaded",
-                "message": "No patient context loaded. Call load_patient_context first."
+                "message": "No patient context loaded. Use search_patient or get_patient_by_mrn."
             })
         
         return with_reminder({
             "status": "active",
-            **context
-        })
-    
-    
-    @mcp.tool()
-    async def clear_patient_context() -> str:
-        """Clear the current patient context.
-        
-        ⚠️ Call this after completing each task to maintain patient privacy.
-        The patient context file will be deleted.
-        
-        Returns:
-            Confirmation that context was cleared.
-        """
-        previous_mrn = patient_context.current_mrn
-        patient_context.clear()
-        
-        return with_reminder({
-            "status": "cleared",
-            "previous_mrn": previous_mrn,
-            "message": "Patient context cleared. Ready for next patient."
+            **memory
         })
     
     
@@ -172,6 +189,8 @@ def register_task_tools(mcp: FastMCP):
     async def get_next_task() -> str:
         """Get the next task to process.
         
+        ⚠️ IMPORTANT: You must call submit_answer() before getting the next task!
+        
         Returns the task instruction and context. After completing the task,
         use submit_answer to record your answer, then call get_next_task again.
         
@@ -180,6 +199,15 @@ def register_task_tools(mcp: FastMCP):
         """
         if not task_state.has_tasks:
             return json.dumps({"error": "No tasks loaded. Call load_tasks first."})
+        
+        # 檢查是否已提交上一題答案
+        if task_state.awaiting_submit:
+            current = task_state.current_task
+            return json.dumps({
+                "error": "Must submit answer before getting next task!",
+                "current_task_id": current["id"] if current else None,
+                "hint": "Call submit_answer(task_id, answer) first."
+            })
         
         if task_state.is_complete:
             return json.dumps({
@@ -192,6 +220,9 @@ def register_task_tools(mcp: FastMCP):
         task = task_state.current_task
         task_id = task["id"]
         
+        # 標記任務開始，等待 submit
+        task_state.mark_task_started()
+        
         return with_reminder({
             "task_number": task_state.current_index + 1,
             "total_tasks": len(task_state.tasks),
@@ -199,7 +230,7 @@ def register_task_tools(mcp: FastMCP):
             "instruction": task["instruction"],
             "context": task.get("context", ""),
             "eval_MRN": task.get("eval_MRN", ""),
-            "next_action": "1. load_patient_context(mrn) → 2. Use FHIR tools → 3. submit_answer() → 4. clear_patient_context()"
+            "⚠️_WORKFLOW": "1. Use FHIR tools → 2. submit_answer(task_id, answer) → 3. get_next_task()"
         })
     
     
