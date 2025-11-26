@@ -48,6 +48,41 @@ MedAgentBench is a benchmark for evaluating LLM agents on 10 types of clinical t
                                           └─────────────────┘
 ```
 
+### Memory Architecture 🧠
+
+MedAgent uses a **layered memory system** to maintain clinical knowledge while ensuring patient privacy:
+
+```
+.med_memory/
+├── CONSTITUTION.md              # 📜 Agent Rules (enforced on every tool call)
+├── knowledge/                   # 📚 Shared Medical Knowledge
+│   ├── clinical_knowledge.md    #    - Clinical protocols & thresholds
+│   ├── fhir_functions.md        #    - FHIR API reference
+│   ├── task_instructions.md     #    - Task-specific answer formats
+│   └── task_examples.md         #    - Worked examples
+└── patient_context/             # 🔐 Isolated Patient Memory
+    └── {mrn}.json               #    - Single patient at a time (auto-cleared)
+```
+
+**Core Principles:**
+| Principle | Description |
+|-----------|-------------|
+| **One Patient at a Time** | Only one patient context loaded simultaneously |
+| **Task Isolation** | Patient memory cleared after each task |
+| **Knowledge Sharing** | Clinical protocols accessible across all tasks |
+| **Privacy by Design** | No cross-patient data access allowed |
+
+**Memory-Aware Workflow:**
+```
+load_tasks() → get_next_task() → load_patient_context(mrn)
+                                          ↓
+                              [Complete task with FHIR tools]
+                                          ↓
+                              submit_answer() → clear_patient_context()
+                                          ↓
+                              get_next_task() → ... (repeat)
+```
+
 ### Prerequisites
 
 - Python 3.10+
@@ -240,6 +275,41 @@ MedAgentBench 是用於評估 LLM 代理在 10 種臨床任務上表現的基準
                                           │   FHIR 伺服器   │
                                           │ (Docker:8080)   │
                                           └─────────────────┘
+```
+
+### 記憶體架構 🧠
+
+MedAgent 使用**分層記憶系統**，在維護臨床知識的同時確保病患隱私：
+
+```
+.med_memory/
+├── CONSTITUTION.md              # 📜 Agent 憲法（每次工具呼叫時強制執行）
+├── knowledge/                   # 📚 共享醫學知識
+│   ├── clinical_knowledge.md    #    - 臨床協議與閾值
+│   ├── fhir_functions.md        #    - FHIR API 參考
+│   ├── task_instructions.md     #    - 任務特定答案格式
+│   └── task_examples.md         #    - 範例解答
+└── patient_context/             # 🔐 隔離的病患記憶
+    └── {mrn}.json               #    - 一次只有一位病患（自動清除）
+```
+
+**核心原則：**
+| 原則 | 說明 |
+|------|------|
+| **一次一位病患** | 同時只能載入一位病患的情境 |
+| **任務隔離** | 每個任務完成後清除病患記憶 |
+| **知識共享** | 臨床協議可跨任務存取 |
+| **隱私優先設計** | 禁止跨病患資料存取 |
+
+**記憶感知工作流程：**
+```
+load_tasks() → get_next_task() → load_patient_context(mrn)
+                                          ↓
+                              [使用 FHIR 工具完成任務]
+                                          ↓
+                              submit_answer() → clear_patient_context()
+                                          ↓
+                              get_next_task() → ...（重複）
 ```
 
 ### 前置需求
