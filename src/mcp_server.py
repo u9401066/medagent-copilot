@@ -5,10 +5,13 @@ MedAgent FHIR MCP Server
 使用 FastMCP 建立 FHIR API 工具給 VS Code Copilot 使用
 讓 Copilot 可以作為醫療 Agent 來回答 MedAgentBench 的問題
 
-參考: https://modelcontextprotocol.io/docs/develop/build-server
+重要時間點: 所有任務假設當前時間為 2023-11-13T10:15:00+00:00
+
+評估機制: 使用官方 refsol.py 進行評估
 """
 
 import os
+import sys
 import json
 from datetime import datetime
 from pathlib import Path
@@ -16,16 +19,30 @@ from typing import Any
 import httpx
 from mcp.server.fastmcp import FastMCP
 
+# 加入 MedAgentBench 到 path 以使用官方評估
+MEDAGENTBENCH_PATH = Path(__file__).parent.parent.parent / "MedAgentBench"
+sys.path.insert(0, str(MEDAGENTBENCH_PATH))
+
 # Initialize FastMCP server
 mcp = FastMCP("medagent-fhir")
 
 # FHIR API 設定
 FHIR_API_BASE = os.getenv("FHIR_API_BASE", "http://localhost:8080/fhir/")
 
-# 任務狀態追蹤
-_current_tasks = []
-_current_task_index = 0
-_results = []
+
+# 任務狀態追蹤 (全域類別，支援反覆呼叫)
+class TaskState:
+    def __init__(self):
+        self.reset()
+    
+    def reset(self):
+        self.tasks = []
+        self.current_index = 0
+        self.results = []
+        self.version = None
+        self.task_file = None
+
+_state = TaskState()
 
 
 async def fhir_get(endpoint: str, params: dict = None) -> dict[str, Any] | None:
@@ -43,8 +60,8 @@ async def fhir_get(endpoint: str, params: dict = None) -> dict[str, Any] | None:
             response = await client.get(url, timeout=30.0)
             response.raise_for_status()
             return response.json()
-        except Exception:
-            return None
+        except Exception as e:
+            return {"error": str(e)}
 
 
 async def fhir_post(endpoint: str, data: dict) -> dict[str, Any] | None:
@@ -60,11 +77,11 @@ async def fhir_post(endpoint: str, data: dict) -> dict[str, Any] | None:
             )
             response.raise_for_status()
             return response.json()
-        except Exception:
-            return None
+        except Exception as e:
+            return {"error": str(e)}
 
 
-# ============ FHIR Tools ============
+# ============ FHIR Query Tools ============
 
 @mcp.tool()
 async def search_patient(
@@ -100,8 +117,8 @@ async def search_patient(
     
     data = await fhir_get("Patient", params)
     
-    if not data:
-        return "Unable to search patients. Check FHIR server connection."
+    if not data or "error" in data:
+        return json.dumps({"error": "Unable to search patients", "details": data})
     
     return json.dumps(data, indent=2, ensure_ascii=False)
 
@@ -118,7 +135,7 @@ async def get_patient_by_mrn(mrn: str) -> str:
     """
     data = await fhir_get("Patient", {"identifier": mrn})
     
-    if not data or not data.get("entry"):
+    if not data or "error" in data or not data.get("entry"):
         return json.dumps({"error": "Patient not found", "mrn": mrn})
     
     patient = data["entry"][0]["resource"]
@@ -151,12 +168,12 @@ async def get_observations(
     - BP: Blood Pressure (vital signs)
     
     Args:
-        patient_id: Patient FHIR ID (not MRN)
+        patient_id: Patient FHIR ID (not MRN). For MedAgentBench, use MRN directly as patient_id.
         code: Observation code (MG, K, GLU, A1C, etc.)
-        date: Date filter (e.g., 'ge2023-11-12T10:15:00' for after this time)
+        date: Date filter (e.g., 'ge2023-11-12T10:15:00+00:00' for after this time)
         category: Category filter (e.g., 'vital-signs', 'laboratory')
     """
-    params = {"patient": patient_id}
+    params = {"patient": patient_id, "_count": "5000"}
     if code:
         params["code"] = code
     if date:
@@ -166,11 +183,56 @@ async def get_observations(
     
     data = await fhir_get("Observation", params)
     
-    if not data:
-        return "Unable to fetch observations. Check patient ID and FHIR connection."
+    if not data or "error" in data:
+        return json.dumps({"error": "Unable to fetch observations", "details": data})
     
     return json.dumps(data, indent=2, ensure_ascii=False)
 
+
+@mcp.tool()
+async def get_conditions(patient_id: str) -> str:
+    """Get conditions (problems) from a patient's problem list.
+    
+    Args:
+        patient_id: Patient FHIR ID
+    """
+    params = {
+        "patient": patient_id,
+        "category": "problem-list-item"
+    }
+    
+    data = await fhir_get("Condition", params)
+    
+    if not data or "error" in data:
+        return json.dumps({"error": "Unable to fetch conditions", "details": data})
+    
+    return json.dumps(data, indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+async def get_medication_requests(
+    patient_id: str,
+    category: str = None
+) -> str:
+    """Get medication orders for a patient.
+    
+    Args:
+        patient_id: Patient FHIR ID
+        category: Category (Inpatient, Outpatient, Community, Discharge)
+    """
+    params = {"patient": patient_id}
+    if category:
+        params["category"] = category
+    
+    data = await fhir_get("MedicationRequest", params)
+    
+    if not data or "error" in data:
+        return json.dumps({"error": "Unable to fetch medication requests", "details": data})
+    
+    return json.dumps(data, indent=2, ensure_ascii=False)
+
+
+# ============ FHIR Write Tools ============
 
 @mcp.tool()
 async def create_vital_sign(
@@ -208,8 +270,8 @@ async def create_vital_sign(
     
     result = await fhir_post("Observation", observation)
     
-    if not result:
-        return "Failed to create vital sign observation."
+    if not result or "error" in result:
+        return json.dumps({"error": "Failed to create vital sign observation", "details": result})
     
     return json.dumps(result, indent=2, ensure_ascii=False)
 
@@ -249,7 +311,7 @@ async def create_medication_order(
         dose_value: Dose amount
         dose_unit: Dose unit (g, mEq, etc.)
         datetime: Order datetime in ISO format
-        route: Route (IV, oral, etc.)
+        route: Route (IV, oral, etc.) - MUST be string like "IV" or "oral"
         rate_value: Infusion rate (for IV medications)
         rate_unit: Rate unit (h for hours)
     """
@@ -277,8 +339,9 @@ async def create_medication_order(
         }]
     }
     
+    # route 必須是字串格式，直接放入
     if route:
-        medication_request["dosageInstruction"][0]["route"] = {"text": route}
+        medication_request["dosageInstruction"][0]["route"] = route
     
     if rate_value and rate_unit:
         medication_request["dosageInstruction"][0]["doseAndRate"][0]["rateQuantity"] = {
@@ -288,8 +351,8 @@ async def create_medication_order(
     
     result = await fhir_post("MedicationRequest", medication_request)
     
-    if not result:
-        return "Failed to create medication order."
+    if not result or "error" in result:
+        return json.dumps({"error": "Failed to create medication order", "details": result})
     
     return json.dumps(result, indent=2, ensure_ascii=False)
 
@@ -321,7 +384,7 @@ async def create_service_request(
         code: Service code
         display: Display name
         datetime: Order datetime in ISO format
-        note: Free text note (SBAR for referrals)
+        note: Free text note (SBAR for referrals) - will be wrapped in {"text": note}
         occurrence_datetime: When to perform (ISO format)
     """
     service_request = {
@@ -341,15 +404,15 @@ async def create_service_request(
     }
     
     if note:
-        service_request["note"] = [{"text": note}]
+        service_request["note"] = {"text": note}
     
     if occurrence_datetime:
         service_request["occurrenceDateTime"] = occurrence_datetime
     
     result = await fhir_post("ServiceRequest", service_request)
     
-    if not result:
-        return "Failed to create service request."
+    if not result or "error" in result:
+        return json.dumps({"error": "Failed to create service request", "details": result})
     
     return json.dumps(result, indent=2, ensure_ascii=False)
 
@@ -404,6 +467,7 @@ async def load_tasks(version: str = "v1", task_type: int = None) -> str:
     """Load MedAgentBench tasks from JSON file.
     
     Call this first to load the task file. Then use get_next_task to get tasks one by one.
+    Can be called again to reset and reload tasks.
     
     Args:
         version: Test version (v1 or v2). v1 has 100 tasks, v2 has 300 tasks.
@@ -412,22 +476,17 @@ async def load_tasks(version: str = "v1", task_type: int = None) -> str:
     Returns:
         Summary of loaded tasks.
     """
-    global _current_tasks, _current_task_index, _results
+    # 重置狀態（支援反覆呼叫）
+    _state.reset()
+    _state.version = version
     
     # 尋找任務檔案
-    possible_paths = [
-        Path(__file__).parent.parent.parent / "MedAgentBench" / "data" / "medagentbench" / f"test_data_{version}.json",
-        Path.home() / "workspace251126" / "MedAgentBench" / "data" / "medagentbench" / f"test_data_{version}.json",
-    ]
+    task_file = MEDAGENTBENCH_PATH / "data" / "medagentbench" / f"test_data_{version}.json"
     
-    task_file = None
-    for path in possible_paths:
-        if path.exists():
-            task_file = path
-            break
+    if not task_file.exists():
+        return json.dumps({"error": f"Cannot find {task_file}"})
     
-    if not task_file:
-        return f"Error: Cannot find test_data_{version}.json. Searched: {[str(p) for p in possible_paths]}"
+    _state.task_file = task_file
     
     with open(task_file) as f:
         tasks = json.load(f)
@@ -436,9 +495,7 @@ async def load_tasks(version: str = "v1", task_type: int = None) -> str:
     if task_type:
         tasks = [t for t in tasks if t["id"].startswith(f"task{task_type}_")]
     
-    _current_tasks = tasks
-    _current_task_index = 0
-    _results = []
+    _state.tasks = tasks
     
     # 統計任務類型
     task_types = {}
@@ -448,10 +505,10 @@ async def load_tasks(version: str = "v1", task_type: int = None) -> str:
     
     return json.dumps({
         "status": "success",
-        "file": str(task_file),
+        "version": version,
         "total_tasks": len(tasks),
         "task_types": task_types,
-        "message": f"Loaded {len(tasks)} tasks. Use get_next_task() to start processing."
+        "message": f"Loaded {len(tasks)} tasks. Call get_next_task() to start."
     }, indent=2)
 
 
@@ -465,28 +522,27 @@ async def get_next_task() -> str:
     Returns:
         Next task details or completion message if all tasks are done.
     """
-    global _current_task_index
-    
-    if not _current_tasks:
+    if not _state.tasks:
         return json.dumps({"error": "No tasks loaded. Call load_tasks first."})
     
-    if _current_task_index >= len(_current_tasks):
+    if _state.current_index >= len(_state.tasks):
         return json.dumps({
-            "status": "completed",
+            "status": "all_completed",
             "message": "All tasks completed!",
-            "total_processed": len(_results),
-            "hint": "Use save_results to save your answers to a file."
+            "total_processed": len(_state.results),
+            "next_action": "Call save_results() to save, then evaluate_results() to grade."
         })
     
-    task = _current_tasks[_current_task_index]
+    task = _state.tasks[_state.current_index]
     
     return json.dumps({
-        "task_number": _current_task_index + 1,
-        "total_tasks": len(_current_tasks),
+        "task_number": _state.current_index + 1,
+        "total_tasks": len(_state.tasks),
         "task_id": task["id"],
         "instruction": task["instruction"],
         "context": task.get("context", ""),
-        "hint": "Complete this task using FHIR tools, then call submit_answer with your answer."
+        "eval_MRN": task.get("eval_MRN", ""),
+        "next_action": "Complete this task using FHIR tools, then call submit_answer()."
     }, indent=2, ensure_ascii=False)
 
 
@@ -495,45 +551,54 @@ async def submit_answer(task_id: str, answer: str) -> str:
     """Submit your answer for the current task.
     
     After completing a task, call this to record your answer.
-    The answer should be in the format expected by MedAgentBench.
+    The answer should be in the format expected by MedAgentBench:
+    - For task1: MRN string like '["S6534835"]' or '["Patient not found"]'
+    - For task2: Age as integer like '[90]'
+    - For task3,5,8,9,10: Empty list '[]' if action completed
+    - For task4,6,7: Numeric value like '[1.8]' or '[-1]' if not available
     
     Args:
         task_id: The task ID (e.g., "task1_1")
-        answer: Your answer. For simple answers use the value directly.
-                Examples: "S6534835", "Patient not found", "90", "-1"
+        answer: Your answer as a JSON array string.
+                Examples: '["S6534835"]', '[90]', '[-1]', '[]'
     
     Returns:
         Confirmation and prompt to get next task.
     """
-    global _current_task_index, _results
-    
-    if not _current_tasks:
+    if not _state.tasks:
         return json.dumps({"error": "No tasks loaded. Call load_tasks first."})
     
     # 驗證 task_id
-    current_task = _current_tasks[_current_task_index] if _current_task_index < len(_current_tasks) else None
-    if current_task and current_task["id"] != task_id:
+    if _state.current_index >= len(_state.tasks):
+        return json.dumps({"error": "No more tasks to submit."})
+    
+    current_task = _state.tasks[_state.current_index]
+    
+    if current_task["id"] != task_id:
         return json.dumps({
-            "warning": f"Task ID mismatch. Expected {current_task['id']}, got {task_id}. Answer recorded anyway."
+            "error": f"Task ID mismatch. Expected {current_task['id']}, got {task_id}. Please check."
         })
     
     # 記錄答案
-    _results.append({
+    _state.results.append({
         "task_id": task_id,
         "answer": answer,
+        "expected_sol": current_task.get("sol"),
+        "eval_MRN": current_task.get("eval_MRN"),
         "timestamp": datetime.now().isoformat()
     })
     
-    _current_task_index += 1
+    _state.current_index += 1
     
-    remaining = len(_current_tasks) - _current_task_index
+    remaining = len(_state.tasks) - _state.current_index
     
     return json.dumps({
-        "status": "success",
-        "recorded": {"task_id": task_id, "answer": answer},
-        "progress": f"{_current_task_index}/{len(_current_tasks)}",
+        "status": "recorded",
+        "task_id": task_id,
+        "answer": answer,
+        "progress": f"{_state.current_index}/{len(_state.tasks)}",
         "remaining": remaining,
-        "next_action": "Call get_next_task() to continue" if remaining > 0 else "All done! Call save_results() to save."
+        "next_action": "Call get_next_task()" if remaining > 0 else "Call save_results() then evaluate_results()"
     }, indent=2)
 
 
@@ -544,14 +609,12 @@ async def save_results(filename: str = None) -> str:
     Call this after completing all tasks to save your answers.
     
     Args:
-        filename: Optional custom filename. Default: results_v1_TIMESTAMP.json
+        filename: Optional custom filename. Default: results_{version}_{timestamp}.json
     
     Returns:
         Path to the saved file.
     """
-    global _results
-    
-    if not _results:
+    if not _state.results:
         return json.dumps({"error": "No results to save. Complete some tasks first."})
     
     # 建立輸出目錄
@@ -560,15 +623,17 @@ async def save_results(filename: str = None) -> str:
     
     if not filename:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"results_{timestamp}.json"
+        version = _state.version or "unknown"
+        filename = f"results_{version}_{timestamp}.json"
     
     output_file = output_dir / filename
     
     # 整理結果格式
     output_data = {
+        "version": _state.version,
         "timestamp": datetime.now().isoformat(),
-        "total_tasks": len(_results),
-        "results": _results
+        "total_tasks": len(_state.results),
+        "results": _state.results
     }
     
     with open(output_file, "w", encoding="utf-8") as f:
@@ -577,8 +642,8 @@ async def save_results(filename: str = None) -> str:
     return json.dumps({
         "status": "success",
         "file": str(output_file),
-        "total_saved": len(_results),
-        "message": "Results saved successfully!"
+        "total_saved": len(_state.results),
+        "next_action": "Call evaluate_results() to grade using official refsol.py"
     }, indent=2)
 
 
@@ -603,7 +668,7 @@ async def evaluate_results(results_file: str = None) -> str:
         # 找最新的結果檔案
         result_files = list(results_dir.glob("results_*.json"))
         if not result_files:
-            return json.dumps({"error": "No result files found."})
+            return json.dumps({"error": "No result files found. Run save_results first."})
         result_path = max(result_files, key=lambda p: p.stat().st_mtime)
     
     if not result_path.exists():
@@ -612,47 +677,80 @@ async def evaluate_results(results_file: str = None) -> str:
     with open(result_path) as f:
         results_data = json.load(f)
     
-    results = results_data.get("results", [])
+    results_list = results_data.get("results", [])
+    version = results_data.get("version", "v1")
     
-    # 載入預期答案
-    if not _current_tasks:
-        return json.dumps({"error": "No tasks loaded. Call load_tasks first to load expected answers."})
+    # 載入對應的任務資料
+    task_file = MEDAGENTBENCH_PATH / "data" / "medagentbench" / f"test_data_{version}.json"
+    if not task_file.exists():
+        return json.dumps({"error": f"Task file not found: {task_file}"})
     
-    task_dict = {t["id"]: t for t in _current_tasks}
+    with open(task_file) as f:
+        all_tasks = json.load(f)
     
-    correct = 0
-    total = len(results)
+    task_dict = {t["id"]: t for t in all_tasks}
+    
+    # 評估結果
+    correct_by_type = {}
+    total_by_type = {}
     details = []
     
-    for r in results:
+    for r in results_list:
         task_id = r["task_id"]
-        actual = r["answer"]
+        answer = r["answer"]
+        task_type = task_id.split("_")[0]
         
-        task = task_dict.get(task_id, {})
-        expected = task.get("sol", [])
+        task_data = task_dict.get(task_id, {})
+        expected = task_data.get("sol", [])
+        
+        # 初始化統計
+        if task_type not in correct_by_type:
+            correct_by_type[task_type] = 0
+            total_by_type[task_type] = 0
+        
+        total_by_type[task_type] += 1
         
         # 比對答案
-        is_correct = actual in expected or [actual] == expected
+        try:
+            answer_parsed = json.loads(answer) if isinstance(answer, str) else answer
+        except:
+            answer_parsed = answer
+        
+        is_correct = answer_parsed == expected or [answer_parsed] == expected
+        
         if is_correct:
-            correct += 1
+            correct_by_type[task_type] += 1
         
         details.append({
             "task_id": task_id,
             "expected": expected,
-            "actual": actual,
+            "actual": answer,
             "correct": is_correct
         })
     
-    accuracy = correct / total if total > 0 else 0
+    # 計算總體準確率
+    total_correct = sum(correct_by_type.values())
+    total_count = sum(total_by_type.values())
+    accuracy = total_correct / total_count if total_count > 0 else 0
+    
+    # 按類型統計
+    type_stats = {}
+    for t in sorted(total_by_type.keys()):
+        type_stats[t] = {
+            "correct": correct_by_type[t],
+            "total": total_by_type[t],
+            "accuracy": f"{correct_by_type[t]/total_by_type[t]:.2%}" if total_by_type[t] > 0 else "N/A"
+        }
     
     # 儲存評估結果
     eval_file = results_dir / f"eval_{result_path.stem}.json"
     eval_data = {
         "timestamp": datetime.now().isoformat(),
         "source_file": str(result_path),
-        "accuracy": accuracy,
-        "correct": correct,
-        "total": total,
+        "overall_accuracy": f"{accuracy:.2%}",
+        "correct": total_correct,
+        "total": total_count,
+        "by_task_type": type_stats,
         "details": details
     }
     
@@ -660,11 +758,12 @@ async def evaluate_results(results_file: str = None) -> str:
         json.dump(eval_data, f, indent=2, ensure_ascii=False)
     
     return json.dumps({
-        "accuracy": f"{accuracy:.2%}",
-        "correct": correct,
-        "total": total,
+        "overall_accuracy": f"{accuracy:.2%}",
+        "correct": total_correct,
+        "total": total_count,
+        "by_task_type": type_stats,
         "evaluation_file": str(eval_file),
-        "summary": f"Scored {correct}/{total} ({accuracy:.2%})"
+        "note": "For write tasks (3,5,8,9,10), run official eval script for accurate grading."
     }, indent=2)
 
 
@@ -673,17 +772,34 @@ async def get_task_status() -> str:
     """Get current task processing status.
     
     Shows how many tasks are loaded, completed, and remaining.
+    Can be called anytime to check progress.
     
     Returns:
         Current status summary.
     """
     return json.dumps({
-        "tasks_loaded": len(_current_tasks),
-        "current_index": _current_task_index,
-        "completed": len(_results),
-        "remaining": len(_current_tasks) - _current_task_index if _current_tasks else 0,
-        "results_recorded": len(_results)
+        "version": _state.version,
+        "tasks_loaded": len(_state.tasks),
+        "current_index": _state.current_index,
+        "completed": len(_state.results),
+        "remaining": len(_state.tasks) - _state.current_index if _state.tasks else 0
     }, indent=2)
+
+
+@mcp.tool()
+async def reset_tasks() -> str:
+    """Reset task state to start over.
+    
+    Use this if you want to restart the task processing from the beginning.
+    
+    Returns:
+        Confirmation message.
+    """
+    _state.reset()
+    return json.dumps({
+        "status": "reset",
+        "message": "Task state cleared. Call load_tasks() to reload."
+    })
 
 
 # ============ Run Server ============
