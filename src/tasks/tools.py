@@ -16,6 +16,38 @@ from ..helpers.patient import patient_memory
 from ..fhir.client import fhir_get
 
 
+# 當前結果檔案路徑
+_current_results_file = None
+
+
+def _save_results_to_file():
+    """即時儲存結果到檔案"""
+    global _current_results_file
+    
+    if not task_state.results:
+        return
+    
+    # 確保目錄存在
+    RESULTS_PATH.mkdir(exist_ok=True)
+    
+    # 使用固定檔名（每次 load_tasks 開始新檔案）
+    if _current_results_file is None:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        version = task_state.version or "unknown"
+        _current_results_file = RESULTS_PATH / f"results_{version}_{timestamp}.json"
+    
+    # 寫入檔案
+    output_data = {
+        "version": task_state.version,
+        "timestamp": datetime.now().isoformat(),
+        "total_tasks": len(task_state.results),
+        "results": task_state.results
+    }
+    
+    with open(_current_results_file, "w", encoding="utf-8") as f:
+        json.dump(output_data, f, indent=2, ensure_ascii=False)
+
+
 def register_task_tools(mcp: FastMCP):
     """向 MCP Server 註冊所有任務管理工具
     
@@ -146,9 +178,12 @@ def register_task_tools(mcp: FastMCP):
         Returns:
             Summary of loaded tasks.
         """
+        global _current_results_file
+        
         # 重置狀態
         task_state.reset()
         task_state.version = version
+        _current_results_file = None  # 重置結果檔案，下次 submit 會建立新檔案
         
         # 尋找任務檔案
         task_file = MEDAGENTBENCH_PATH / "data" / "medagentbench" / f"test_data_{version}.json"
@@ -239,16 +274,12 @@ def register_task_tools(mcp: FastMCP):
         """Submit your answer for the current task.
         
         After completing a task, call this to record your answer.
-        The answer should be in the format expected by MedAgentBench:
-        - For task1: MRN string like '["S6534835"]' or '["Patient not found"]'
-        - For task2: Age as integer like '[90]'
-        - For task3,5,8,9,10: Empty list '[]' if action completed
-        - For task4,6,7: Numeric value like '[1.8]' or '[-1]' if not available
+        The answer will be immediately saved to the results file.
         
         Args:
             task_id: The task ID (e.g., "task1_1")
-            answer: Your answer as a JSON array string.
-                    Examples: '["S6534835"]', '[90]', '[-1]', '[]'
+            answer: Your answer. For simple answers use the value directly.
+                    Examples: "S6534835", "Patient not found", "90", "-1"
         
         Returns:
             Confirmation and prompt to get next task.
@@ -269,6 +300,9 @@ def register_task_tools(mcp: FastMCP):
         # 記錄答案
         task_state.add_result(task_id, answer, current_task)
         
+        # 即時寫入檔案
+        _save_results_to_file()
+        
         remaining = task_state.remaining
         
         return with_reminder({
@@ -277,7 +311,7 @@ def register_task_tools(mcp: FastMCP):
             "answer": answer,
             "progress": f"{task_state.current_index}/{len(task_state.tasks)}",
             "remaining": remaining,
-            "next_action": "clear_patient_context() → get_next_task()" if remaining > 0 else "clear_patient_context() → save_results() → evaluate_results()"
+            "next_action": "get_next_task()" if remaining > 0 else "evaluate_results()"
         })
     
     
