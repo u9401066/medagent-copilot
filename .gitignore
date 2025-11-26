@@ -11,6 +11,7 @@ env/
 
 # IDE
 .idea/
+.vscode/
 *.swp
 *.swo
 
@@ -30,5 +31,10 @@ outputs/
 
 # Patient Context (隱私保護 - 不可提交到 Git)
 .med_memory/patient_context/current_patient.json
-.med_memory/patient_context/patients/
-results/
+.med_memory/patient_context/patients/*.json
+
+# Results (每次測試結果)
+results/v*_*/
+
+# MedAgentBench (需另外 clone)
+MedAgentBench/

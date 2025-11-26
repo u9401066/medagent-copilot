@@ -2,6 +2,103 @@
 
 使用 MCP (Model Context Protocol) 讓 GitHub Copilot 成為醫療 Agent，執行 MedAgentBench FHIR 任務。
 
+## 📋 前置需求
+
+- Python 3.10+
+- VS Code + GitHub Copilot 擴充功能
+- Docker (用於 FHIR 伺服器)
+- MedAgentBench 資料集 (需另外 clone)
+
+## 🚀 快速開始
+
+### 1. Clone 專案
+
+```bash
+git clone https://github.com/u9401066/medagent-copilot.git
+cd medagent-copilot
+```
+
+### 2. 安裝依賴
+
+```bash
+python -m venv venv
+source venv/bin/activate  # Windows: venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+### 3. Clone MedAgentBench (放在同層目錄)
+
+```bash
+cd ..
+git clone https://github.com/stanfordmlgroup/MedAgentBench.git
+```
+
+最終目錄結構：
+```
+workspace/
+├── medagent-copilot/    # 本專案
+└── MedAgentBench/       # 官方資料集
+```
+
+### 4. 啟動 FHIR 伺服器
+
+```bash
+docker run -p 8080:8080 jyxsu6/medagentbench:latest
+```
+
+驗證：`curl http://localhost:8080/fhir/Patient?_count=1`
+
+### 5. 設定 VS Code MCP
+
+在專案根目錄建立 `.vscode/mcp.json`：
+
+```json
+{
+  "servers": {
+    "medagent-fhir": {
+      "type": "stdio",
+      "command": "python",
+      "args": ["${workspaceFolder}/medagent-copilot/src/mcp_server.py"],
+      "env": {
+        "FHIR_API_BASE": "http://localhost:8080/fhir/"
+      }
+    }
+  }
+}
+```
+
+或者如果 medagent-copilot 是根目錄：
+
+```json
+{
+  "servers": {
+    "medagent-fhir": {
+      "type": "stdio",
+      "command": "python",
+      "args": ["${workspaceFolder}/src/mcp_server.py"],
+      "env": {
+        "FHIR_API_BASE": "http://localhost:8080/fhir/"
+      }
+    }
+  }
+}
+```
+
+### 6. 啟動 MCP Server
+
+1. 開啟 VS Code
+2. 按 `Cmd/Ctrl + Shift + P` → 輸入 `MCP: List Servers`
+3. 確認 `medagent-fhir` 顯示為 Running
+4. 如果沒有，按 `MCP: Start Server` → 選擇 `medagent-fhir`
+
+### 7. 開始使用
+
+在 GitHub Copilot Chat 中：
+
+```
+@workspace 請載入 MedAgentBench V1 任務並開始執行
+```
+
 ## 🏗️ 專案架構
 
 ```
@@ -11,7 +108,7 @@ medagent-copilot/
 │   ├── knowledge/            # 📚 醫學知識庫
 │   │   ├── clinical_protocols.md
 │   │   ├── fhir_reference.md
-│   │   └── medication_dosing.md
+│   │   └── task_instructions.md
 │   └── patient_context/      # 🔐 病人情境記憶（隔離區）
 ├── src/
 │   ├── mcp_server.py         # MCP Server 入口
@@ -26,42 +123,11 @@ medagent-copilot/
 │   └── helpers/              # 輔助工具
 │       ├── reminder.py       # 格式提醒系統
 │       └── patient.py        # 病人記憶管理
+├── docs/                     # 文件
+│   └── RESULT_FORMAT.md      # 結果 JSON 格式規範
 ├── results/                  # 評估結果
 ├── evaluate_with_official.py # 官方評估腳本
 └── requirements.txt
-```
-
-## 🚀 快速開始
-
-### 1. 環境設定
-
-```bash
-cd medagent-copilot
-python -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-```
-
-### 2. 啟動 FHIR 伺服器
-
-```bash
-docker run -p 8080:8080 jyxsu6/medagentbench:latest
-```
-
-### 3. VS Code MCP 設定
-
-確保 `.vscode/mcp.json` 正確設定：
-
-```json
-{
-  "mcpServers": {
-    "medagent-fhir": {
-      "command": "python",
-      "args": ["src/mcp_server.py"],
-      "cwd": "${workspaceFolder}"
-    }
-  }
-}
 ```
 
 ## 📋 MCP 工具一覽
