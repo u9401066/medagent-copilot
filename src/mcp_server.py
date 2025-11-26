@@ -10,6 +10,8 @@ MedAgent FHIR MCP Server
 
 import os
 import json
+from datetime import datetime
+from pathlib import Path
 from typing import Any
 import httpx
 from mcp.server.fastmcp import FastMCP
@@ -19,6 +21,11 @@ mcp = FastMCP("medagent-fhir")
 
 # FHIR API 設定
 FHIR_API_BASE = os.getenv("FHIR_API_BASE", "http://localhost:8080/fhir/")
+
+# 任務狀態追蹤
+_current_tasks = []
+_current_task_index = 0
+_results = []
 
 
 async def fhir_get(endpoint: str, params: dict = None) -> dict[str, Any] | None:
@@ -388,6 +395,295 @@ async def get_medication_requests(
         return "Unable to fetch medication requests. Check patient ID and FHIR connection."
     
     return json.dumps(data, indent=2, ensure_ascii=False)
+
+
+# ============ Task Management Tools ============
+
+@mcp.tool()
+async def load_tasks(version: str = "v1", task_type: int = None) -> str:
+    """Load MedAgentBench tasks from JSON file.
+    
+    Call this first to load the task file. Then use get_next_task to get tasks one by one.
+    
+    Args:
+        version: Test version (v1 or v2). v1 has 100 tasks, v2 has 300 tasks.
+        task_type: Optional filter for specific task type (1-10). If not specified, loads all tasks.
+    
+    Returns:
+        Summary of loaded tasks.
+    """
+    global _current_tasks, _current_task_index, _results
+    
+    # 尋找任務檔案
+    possible_paths = [
+        Path(__file__).parent.parent.parent / "MedAgentBench" / "data" / "medagentbench" / f"test_data_{version}.json",
+        Path.home() / "workspace251126" / "MedAgentBench" / "data" / "medagentbench" / f"test_data_{version}.json",
+    ]
+    
+    task_file = None
+    for path in possible_paths:
+        if path.exists():
+            task_file = path
+            break
+    
+    if not task_file:
+        return f"Error: Cannot find test_data_{version}.json. Searched: {[str(p) for p in possible_paths]}"
+    
+    with open(task_file) as f:
+        tasks = json.load(f)
+    
+    # 過濾任務類型
+    if task_type:
+        tasks = [t for t in tasks if t["id"].startswith(f"task{task_type}_")]
+    
+    _current_tasks = tasks
+    _current_task_index = 0
+    _results = []
+    
+    # 統計任務類型
+    task_types = {}
+    for t in tasks:
+        prefix = t["id"].split("_")[0]
+        task_types[prefix] = task_types.get(prefix, 0) + 1
+    
+    return json.dumps({
+        "status": "success",
+        "file": str(task_file),
+        "total_tasks": len(tasks),
+        "task_types": task_types,
+        "message": f"Loaded {len(tasks)} tasks. Use get_next_task() to start processing."
+    }, indent=2)
+
+
+@mcp.tool()
+async def get_next_task() -> str:
+    """Get the next task to process.
+    
+    Returns the task instruction and context. After completing the task,
+    use submit_answer to record your answer, then call get_next_task again.
+    
+    Returns:
+        Next task details or completion message if all tasks are done.
+    """
+    global _current_task_index
+    
+    if not _current_tasks:
+        return json.dumps({"error": "No tasks loaded. Call load_tasks first."})
+    
+    if _current_task_index >= len(_current_tasks):
+        return json.dumps({
+            "status": "completed",
+            "message": "All tasks completed!",
+            "total_processed": len(_results),
+            "hint": "Use save_results to save your answers to a file."
+        })
+    
+    task = _current_tasks[_current_task_index]
+    
+    return json.dumps({
+        "task_number": _current_task_index + 1,
+        "total_tasks": len(_current_tasks),
+        "task_id": task["id"],
+        "instruction": task["instruction"],
+        "context": task.get("context", ""),
+        "hint": "Complete this task using FHIR tools, then call submit_answer with your answer."
+    }, indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+async def submit_answer(task_id: str, answer: str) -> str:
+    """Submit your answer for the current task.
+    
+    After completing a task, call this to record your answer.
+    The answer should be in the format expected by MedAgentBench.
+    
+    Args:
+        task_id: The task ID (e.g., "task1_1")
+        answer: Your answer. For simple answers use the value directly.
+                Examples: "S6534835", "Patient not found", "90", "-1"
+    
+    Returns:
+        Confirmation and prompt to get next task.
+    """
+    global _current_task_index, _results
+    
+    if not _current_tasks:
+        return json.dumps({"error": "No tasks loaded. Call load_tasks first."})
+    
+    # 驗證 task_id
+    current_task = _current_tasks[_current_task_index] if _current_task_index < len(_current_tasks) else None
+    if current_task and current_task["id"] != task_id:
+        return json.dumps({
+            "warning": f"Task ID mismatch. Expected {current_task['id']}, got {task_id}. Answer recorded anyway."
+        })
+    
+    # 記錄答案
+    _results.append({
+        "task_id": task_id,
+        "answer": answer,
+        "timestamp": datetime.now().isoformat()
+    })
+    
+    _current_task_index += 1
+    
+    remaining = len(_current_tasks) - _current_task_index
+    
+    return json.dumps({
+        "status": "success",
+        "recorded": {"task_id": task_id, "answer": answer},
+        "progress": f"{_current_task_index}/{len(_current_tasks)}",
+        "remaining": remaining,
+        "next_action": "Call get_next_task() to continue" if remaining > 0 else "All done! Call save_results() to save."
+    }, indent=2)
+
+
+@mcp.tool()
+async def save_results(filename: str = None) -> str:
+    """Save all submitted answers to a JSON file.
+    
+    Call this after completing all tasks to save your answers.
+    
+    Args:
+        filename: Optional custom filename. Default: results_v1_TIMESTAMP.json
+    
+    Returns:
+        Path to the saved file.
+    """
+    global _results
+    
+    if not _results:
+        return json.dumps({"error": "No results to save. Complete some tasks first."})
+    
+    # 建立輸出目錄
+    output_dir = Path(__file__).parent.parent / "results"
+    output_dir.mkdir(exist_ok=True)
+    
+    if not filename:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"results_{timestamp}.json"
+    
+    output_file = output_dir / filename
+    
+    # 整理結果格式
+    output_data = {
+        "timestamp": datetime.now().isoformat(),
+        "total_tasks": len(_results),
+        "results": _results
+    }
+    
+    with open(output_file, "w", encoding="utf-8") as f:
+        json.dump(output_data, f, indent=2, ensure_ascii=False)
+    
+    return json.dumps({
+        "status": "success",
+        "file": str(output_file),
+        "total_saved": len(_results),
+        "message": "Results saved successfully!"
+    }, indent=2)
+
+
+@mcp.tool()
+async def evaluate_results(results_file: str = None) -> str:
+    """Evaluate saved results against expected answers.
+    
+    Compares your answers with the expected solutions from the task file.
+    
+    Args:
+        results_file: Path to results JSON file. If not specified, uses the most recent.
+    
+    Returns:
+        Evaluation summary with accuracy and details.
+    """
+    # 找到結果檔案
+    results_dir = Path(__file__).parent.parent / "results"
+    
+    if results_file:
+        result_path = Path(results_file)
+    else:
+        # 找最新的結果檔案
+        result_files = list(results_dir.glob("results_*.json"))
+        if not result_files:
+            return json.dumps({"error": "No result files found."})
+        result_path = max(result_files, key=lambda p: p.stat().st_mtime)
+    
+    if not result_path.exists():
+        return json.dumps({"error": f"File not found: {result_path}"})
+    
+    with open(result_path) as f:
+        results_data = json.load(f)
+    
+    results = results_data.get("results", [])
+    
+    # 載入預期答案
+    if not _current_tasks:
+        return json.dumps({"error": "No tasks loaded. Call load_tasks first to load expected answers."})
+    
+    task_dict = {t["id"]: t for t in _current_tasks}
+    
+    correct = 0
+    total = len(results)
+    details = []
+    
+    for r in results:
+        task_id = r["task_id"]
+        actual = r["answer"]
+        
+        task = task_dict.get(task_id, {})
+        expected = task.get("sol", [])
+        
+        # 比對答案
+        is_correct = actual in expected or [actual] == expected
+        if is_correct:
+            correct += 1
+        
+        details.append({
+            "task_id": task_id,
+            "expected": expected,
+            "actual": actual,
+            "correct": is_correct
+        })
+    
+    accuracy = correct / total if total > 0 else 0
+    
+    # 儲存評估結果
+    eval_file = results_dir / f"eval_{result_path.stem}.json"
+    eval_data = {
+        "timestamp": datetime.now().isoformat(),
+        "source_file": str(result_path),
+        "accuracy": accuracy,
+        "correct": correct,
+        "total": total,
+        "details": details
+    }
+    
+    with open(eval_file, "w") as f:
+        json.dump(eval_data, f, indent=2, ensure_ascii=False)
+    
+    return json.dumps({
+        "accuracy": f"{accuracy:.2%}",
+        "correct": correct,
+        "total": total,
+        "evaluation_file": str(eval_file),
+        "summary": f"Scored {correct}/{total} ({accuracy:.2%})"
+    }, indent=2)
+
+
+@mcp.tool()
+async def get_task_status() -> str:
+    """Get current task processing status.
+    
+    Shows how many tasks are loaded, completed, and remaining.
+    
+    Returns:
+        Current status summary.
+    """
+    return json.dumps({
+        "tasks_loaded": len(_current_tasks),
+        "current_index": _current_task_index,
+        "completed": len(_results),
+        "remaining": len(_current_tasks) - _current_task_index if _current_tasks else 0,
+        "results_recorded": len(_results)
+    }, indent=2)
 
 
 # ============ Run Server ============
