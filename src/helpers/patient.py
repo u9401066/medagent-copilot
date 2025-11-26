@@ -10,7 +10,7 @@ Patient Memory - 病人記憶管理
 import json
 from datetime import datetime
 from pathlib import Path
-from ..config import PATIENT_CONTEXT_PATH
+from config import PATIENT_CONTEXT_PATH
 
 
 class PatientMemory:

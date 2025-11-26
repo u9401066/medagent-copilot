@@ -6,7 +6,7 @@ Knowledge Resources - 醫學知識與憲法暴露
 
 from pathlib import Path
 from mcp.server.fastmcp import FastMCP
-from ..config import MED_MEMORY_PATH
+from config import MED_MEMORY_PATH
 
 
 def register_resources(mcp: FastMCP):

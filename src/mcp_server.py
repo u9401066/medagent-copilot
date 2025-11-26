@@ -17,15 +17,23 @@ MedAgent FHIR MCP Server
 提醒系統: 每個工具回傳都會附帶簡短提醒
 """
 
+import sys
+from pathlib import Path
+
+# 確保 src 目錄在 path 中
+src_dir = Path(__file__).parent
+if str(src_dir) not in sys.path:
+    sys.path.insert(0, str(src_dir))
+
 from mcp.server.fastmcp import FastMCP
 
 # 建立 MCP Server
 mcp = FastMCP("medagent-fhir")
 
-# 註冊所有工具
-from .fhir import register_fhir_tools
-from .tasks import register_task_tools
-from .resources import register_resources
+# 註冊所有工具 (使用絕對 import)
+from fhir import register_fhir_tools
+from tasks import register_task_tools
+from resources import register_resources
 
 register_fhir_tools(mcp)
 register_task_tools(mcp)

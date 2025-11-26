@@ -5,9 +5,9 @@ FHIR Tools - FHIR Query 與 Write 工具
 """
 
 from mcp.server.fastmcp import FastMCP
-from .client import fhir_get, fhir_post
-from ..helpers import with_reminder
-from ..helpers.patient import patient_memory
+from fhir.client import fhir_get, fhir_post
+from helpers import with_reminder
+from helpers.patient import patient_memory
 
 
 def register_fhir_tools(mcp: FastMCP):

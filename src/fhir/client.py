@@ -6,7 +6,7 @@ FHIR Client - FHIR API 連線與請求
 
 from typing import Any
 import httpx
-from ..config import FHIR_API_BASE
+from config import FHIR_API_BASE
 
 
 async def fhir_get(endpoint: str, params: dict = None) -> dict[str, Any] | None:
