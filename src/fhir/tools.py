@@ -289,7 +289,7 @@ def register_fhir_tools(mcp: FastMCP):
         if not result or "error" in result:
             return with_reminder({"error": "Failed to create medication order", "details": result})
         
-        return with_reminder(result)
+        return with_reminder(result, context="Verify dosing with med://knowledge/clinical")
     
     
     @mcp.tool()
@@ -349,4 +349,4 @@ def register_fhir_tools(mcp: FastMCP):
         if not result or "error" in result:
             return with_reminder({"error": "Failed to create service request", "details": result})
         
-        return with_reminder(result)
+        return with_reminder(result, context="For referrals, ensure SBAR format in note")

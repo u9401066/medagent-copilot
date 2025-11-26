@@ -23,12 +23,11 @@ from mcp.server.fastmcp import FastMCP
 mcp = FastMCP("medagent-fhir")
 
 # 註冊所有工具
-from .fhir import register_fhir_tools, register_composite_tools
+from .fhir import register_fhir_tools
 from .tasks import register_task_tools
 from .resources import register_resources
 
 register_fhir_tools(mcp)
-register_composite_tools(mcp)
 register_task_tools(mcp)
 register_resources(mcp)
 
