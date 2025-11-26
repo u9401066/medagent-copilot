@@ -4,6 +4,9 @@ Task State - 任務狀態追蹤
 管理任務載入、進度和結果
 """
 
+from datetime import datetime
+from pathlib import Path
+
 
 class TaskState:
     """任務狀態追蹤 (支援反覆呼叫)"""
@@ -18,7 +21,24 @@ class TaskState:
         self.results = []
         self.version = None
         self.task_file = None
-        self.awaiting_submit = False  # 是否正在等待 submit
+        self.awaiting_submit = False
+        self.run_folder = None  # 本次執行的資料夾
+        self.run_timestamp = None  # 本次執行的時間戳
+    
+    def init_run_folder(self, base_path: Path):
+        """初始化本次執行的資料夾
+        
+        結構：
+        results/
+          {version}_{timestamp}/
+            agent_results.json     # Agent 提交的原始結果
+            evaluation.json        # 評估結果
+        """
+        self.run_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        folder_name = f"{self.version}_{self.run_timestamp}"
+        self.run_folder = base_path / folder_name
+        self.run_folder.mkdir(parents=True, exist_ok=True)
+        return self.run_folder
     
     @property
     def has_tasks(self) -> bool:
@@ -54,7 +74,6 @@ class TaskState:
             answer: 提交的答案
             task_data: 原始任務資料
         """
-        from datetime import datetime
         from fhir.post_history import post_history
         
         # 生成官方格式的 POST 歷史
@@ -71,7 +90,7 @@ class TaskState:
             "post_count": post_history.get_post_count_for_task(task_id)
         })
         self.current_index += 1
-        self.awaiting_submit = False  # 解鎖，允許 get_next_task
+        self.awaiting_submit = False
 
 
 # 全域單例
