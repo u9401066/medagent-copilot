@@ -27,3 +27,6 @@ Thumbs.db
 
 # Test outputs
 outputs/
+
+# Patient Context (隱私保護 - 不可提交到 Git)
+.med_memory/patient_context/current_patient.json

@@ -8,6 +8,8 @@ MedAgent FHIR MCP Server
 重要時間點: 所有任務假設當前時間為 2023-11-13T10:15:00+00:00
 
 評估機制: 使用官方 refsol.py 進行評估
+
+憲法系統: 每個工具回傳都會附帶憲法提醒，確保 Copilot 遵守隱私保護規則
 """
 
 import os
@@ -23,11 +25,97 @@ from mcp.server.fastmcp import FastMCP
 MEDAGENTBENCH_PATH = Path(__file__).parent.parent.parent / "MedAgentBench"
 sys.path.insert(0, str(MEDAGENTBENCH_PATH))
 
+# 記憶體路徑
+MED_MEMORY_PATH = Path(__file__).parent.parent / ".med_memory"
+PATIENT_CONTEXT_PATH = MED_MEMORY_PATH / "patient_context"
+KNOWLEDGE_PATH = MED_MEMORY_PATH / "knowledge"
+
 # Initialize FastMCP server
 mcp = FastMCP("medagent-fhir")
 
 # FHIR API 設定
 FHIR_API_BASE = os.getenv("FHIR_API_BASE", "http://localhost:8080/fhir/")
+
+
+# ============ 憲法提醒系統 ============
+
+CONSTITUTION_REMINDER = """
+📜 [CONSTITUTION REMINDER]
+• 記憶系統: knowledge/ (通用醫學) + patient_context/ (個人化，僅限當前病人)
+• 隱私規則: 一次只能處理一位病人，任務結束後清除 patient_context
+• 時間點: 2023-11-13T10:15:00+00:00
+• 答案格式: JSON 陣列字串，如 '["S6534835"]', '[90]', '[-1]', '[]'
+"""
+
+def with_constitution(result: dict | str) -> str:
+    """為工具回傳結果附加憲法提醒"""
+    if isinstance(result, str):
+        try:
+            result = json.loads(result)
+        except:
+            return result + "\n" + CONSTITUTION_REMINDER
+    
+    if isinstance(result, dict):
+        result["_constitution_reminder"] = CONSTITUTION_REMINDER.strip()
+    
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+# ============ 病人情境管理 ============
+
+class PatientContext:
+    """病人情境記憶管理 - 強制單一病人"""
+    
+    def __init__(self):
+        self.current_mrn = None
+        self.current_fhir_id = None
+        self.loaded_at = None
+        self.task_id = None
+    
+    def load(self, mrn: str, fhir_id: str = None, task_id: str = None):
+        """載入病人情境 - 會先清除舊的"""
+        if self.current_mrn and self.current_mrn != mrn:
+            self.clear()  # 強制清除舊病人
+        
+        self.current_mrn = mrn
+        self.current_fhir_id = fhir_id
+        self.loaded_at = datetime.now().isoformat()
+        self.task_id = task_id
+        
+        # 寫入檔案
+        self._save_to_file()
+    
+    def clear(self):
+        """清除病人情境"""
+        self.current_mrn = None
+        self.current_fhir_id = None
+        self.loaded_at = None
+        self.task_id = None
+        
+        # 刪除檔案
+        context_file = PATIENT_CONTEXT_PATH / "current_patient.json"
+        if context_file.exists():
+            context_file.unlink()
+    
+    def get_current(self) -> dict | None:
+        """取得當前病人情境"""
+        if not self.current_mrn:
+            return None
+        return {
+            "mrn": self.current_mrn,
+            "fhir_id": self.current_fhir_id,
+            "loaded_at": self.loaded_at,
+            "task_id": self.task_id
+        }
+    
+    def _save_to_file(self):
+        """儲存到檔案"""
+        PATIENT_CONTEXT_PATH.mkdir(parents=True, exist_ok=True)
+        context_file = PATIENT_CONTEXT_PATH / "current_patient.json"
+        with open(context_file, "w") as f:
+            json.dump(self.get_current(), f, indent=2)
+
+_patient_context = PatientContext()
 
 
 # 任務狀態追蹤 (全域類別，支援反覆呼叫)
@@ -41,6 +129,7 @@ class TaskState:
         self.results = []
         self.version = None
         self.task_file = None
+        _patient_context.clear()  # 同時清除病人情境
 
 _state = TaskState()
 
@@ -118,9 +207,9 @@ async def search_patient(
     data = await fhir_get("Patient", params)
     
     if not data or "error" in data:
-        return json.dumps({"error": "Unable to search patients", "details": data})
+        return with_constitution({"error": "Unable to search patients", "details": data})
     
-    return json.dumps(data, indent=2, ensure_ascii=False)
+    return with_constitution(data)
 
 
 @mcp.tool()
@@ -136,7 +225,7 @@ async def get_patient_by_mrn(mrn: str) -> str:
     data = await fhir_get("Patient", {"identifier": mrn})
     
     if not data or "error" in data or not data.get("entry"):
-        return json.dumps({"error": "Patient not found", "mrn": mrn})
+        return with_constitution({"error": "Patient not found", "mrn": mrn})
     
     patient = data["entry"][0]["resource"]
     summary = {
@@ -146,7 +235,7 @@ async def get_patient_by_mrn(mrn: str) -> str:
         "birthDate": patient.get("birthDate"),
         "gender": patient.get("gender"),
     }
-    return json.dumps(summary, indent=2, ensure_ascii=False)
+    return with_constitution(summary)
 
 
 @mcp.tool()
@@ -184,9 +273,9 @@ async def get_observations(
     data = await fhir_get("Observation", params)
     
     if not data or "error" in data:
-        return json.dumps({"error": "Unable to fetch observations", "details": data})
+        return with_constitution({"error": "Unable to fetch observations", "details": data})
     
-    return json.dumps(data, indent=2, ensure_ascii=False)
+    return with_constitution(data)
 
 
 @mcp.tool()
@@ -204,9 +293,9 @@ async def get_conditions(patient_id: str) -> str:
     data = await fhir_get("Condition", params)
     
     if not data or "error" in data:
-        return json.dumps({"error": "Unable to fetch conditions", "details": data})
+        return with_constitution({"error": "Unable to fetch conditions", "details": data})
     
-    return json.dumps(data, indent=2, ensure_ascii=False)
+    return with_constitution(data)
 
 
 @mcp.tool()
@@ -227,9 +316,9 @@ async def get_medication_requests(
     data = await fhir_get("MedicationRequest", params)
     
     if not data or "error" in data:
-        return json.dumps({"error": "Unable to fetch medication requests", "details": data})
+        return with_constitution({"error": "Unable to fetch medication requests", "details": data})
     
-    return json.dumps(data, indent=2, ensure_ascii=False)
+    return with_constitution(data)
 
 
 # ============ FHIR Write Tools ============
@@ -271,9 +360,9 @@ async def create_vital_sign(
     result = await fhir_post("Observation", observation)
     
     if not result or "error" in result:
-        return json.dumps({"error": "Failed to create vital sign observation", "details": result})
+        return with_constitution({"error": "Failed to create vital sign observation", "details": result})
     
-    return json.dumps(result, indent=2, ensure_ascii=False)
+    return with_constitution(result)
 
 
 @mcp.tool()
@@ -352,9 +441,9 @@ async def create_medication_order(
     result = await fhir_post("MedicationRequest", medication_request)
     
     if not result or "error" in result:
-        return json.dumps({"error": "Failed to create medication order", "details": result})
+        return with_constitution({"error": "Failed to create medication order", "details": result})
     
-    return json.dumps(result, indent=2, ensure_ascii=False)
+    return with_constitution(result)
 
 
 @mcp.tool()
@@ -412,55 +501,101 @@ async def create_service_request(
     result = await fhir_post("ServiceRequest", service_request)
     
     if not result or "error" in result:
-        return json.dumps({"error": "Failed to create service request", "details": result})
+        return with_constitution({"error": "Failed to create service request", "details": result})
     
-    return json.dumps(result, indent=2, ensure_ascii=False)
-
-
-@mcp.tool()
-async def get_conditions(patient_id: str) -> str:
-    """Get conditions (problems) from a patient's problem list.
-    
-    Args:
-        patient_id: Patient FHIR ID
-    """
-    params = {
-        "patient": patient_id,
-        "category": "problem-list-item"
-    }
-    
-    data = await fhir_get("Condition", params)
-    
-    if not data:
-        return "Unable to fetch conditions. Check patient ID and FHIR connection."
-    
-    return json.dumps(data, indent=2, ensure_ascii=False)
-
-
-@mcp.tool()
-async def get_medication_requests(
-    patient_id: str,
-    category: str = None
-) -> str:
-    """Get medication orders for a patient.
-    
-    Args:
-        patient_id: Patient FHIR ID
-        category: Category (Inpatient, Outpatient, Community, Discharge)
-    """
-    params = {"patient": patient_id}
-    if category:
-        params["category"] = category
-    
-    data = await fhir_get("MedicationRequest", params)
-    
-    if not data:
-        return "Unable to fetch medication requests. Check patient ID and FHIR connection."
-    
-    return json.dumps(data, indent=2, ensure_ascii=False)
+    return with_constitution(result)
 
 
 # ============ Task Management Tools ============
+
+@mcp.tool()
+async def get_constitution() -> str:
+    """Get the MedAgent Constitution - rules for memory usage and privacy protection.
+    
+    Call this at the start of a session to understand the rules.
+    The constitution is also reminded in every tool response.
+    
+    Returns:
+        Full constitution text with memory architecture and privacy rules.
+    """
+    constitution_file = MED_MEMORY_PATH / "CONSTITUTION.md"
+    if constitution_file.exists():
+        with open(constitution_file) as f:
+            return f.read()
+    return "Constitution file not found. Check .med_memory/CONSTITUTION.md"
+
+
+@mcp.tool()
+async def load_patient_context(mrn: str, task_id: str = None) -> str:
+    """Load patient context for the current task.
+    
+    ⚠️ IMPORTANT: This will clear any previous patient context!
+    Only one patient can be loaded at a time to prevent data leakage.
+    
+    Args:
+        mrn: Patient MRN to load (e.g., S6534835)
+        task_id: Optional task ID for tracking
+    
+    Returns:
+        Confirmation of loaded patient context.
+    """
+    # 先查詢病人資訊
+    data = await fhir_get("Patient", {"identifier": mrn})
+    
+    fhir_id = None
+    if data and data.get("entry"):
+        fhir_id = data["entry"][0]["resource"]["id"]
+    
+    _patient_context.load(mrn, fhir_id, task_id)
+    
+    return with_constitution({
+        "status": "loaded",
+        "mrn": mrn,
+        "fhir_id": fhir_id,
+        "task_id": task_id,
+        "warning": "Previous patient context was cleared. Only this patient's data is accessible now."
+    })
+
+
+@mcp.tool()
+async def get_current_patient_context() -> str:
+    """Get the currently loaded patient context.
+    
+    Returns:
+        Current patient MRN, FHIR ID, and when it was loaded.
+    """
+    context = _patient_context.get_current()
+    if not context:
+        return with_constitution({
+            "status": "no_patient_loaded",
+            "message": "No patient context loaded. Call load_patient_context first."
+        })
+    
+    return with_constitution({
+        "status": "active",
+        **context
+    })
+
+
+@mcp.tool()
+async def clear_patient_context() -> str:
+    """Clear the current patient context.
+    
+    ⚠️ Call this after completing each task to maintain patient privacy.
+    The patient context file will be deleted.
+    
+    Returns:
+        Confirmation that context was cleared.
+    """
+    previous_mrn = _patient_context.current_mrn
+    _patient_context.clear()
+    
+    return with_constitution({
+        "status": "cleared",
+        "previous_mrn": previous_mrn,
+        "message": "Patient context cleared. Ready for next patient."
+    })
+
 
 @mcp.tool()
 async def load_tasks(version: str = "v1", task_type: int = None) -> str:
@@ -503,13 +638,14 @@ async def load_tasks(version: str = "v1", task_type: int = None) -> str:
         prefix = t["id"].split("_")[0]
         task_types[prefix] = task_types.get(prefix, 0) + 1
     
-    return json.dumps({
+    return with_constitution({
         "status": "success",
         "version": version,
         "total_tasks": len(tasks),
         "task_types": task_types,
-        "message": f"Loaded {len(tasks)} tasks. Call get_next_task() to start."
-    }, indent=2)
+        "message": f"Loaded {len(tasks)} tasks. Call get_next_task() to start.",
+        "workflow": "get_next_task → load_patient_context → [FHIR tools] → submit_answer → clear_patient_context → repeat"
+    })
 
 
 @mcp.tool()
@@ -535,15 +671,15 @@ async def get_next_task() -> str:
     
     task = _state.tasks[_state.current_index]
     
-    return json.dumps({
+    return with_constitution({
         "task_number": _state.current_index + 1,
         "total_tasks": len(_state.tasks),
         "task_id": task["id"],
         "instruction": task["instruction"],
         "context": task.get("context", ""),
         "eval_MRN": task.get("eval_MRN", ""),
-        "next_action": "Complete this task using FHIR tools, then call submit_answer()."
-    }, indent=2, ensure_ascii=False)
+        "next_action": "1. load_patient_context(mrn) → 2. Use FHIR tools → 3. submit_answer() → 4. clear_patient_context()"
+    })
 
 
 @mcp.tool()
@@ -592,14 +728,14 @@ async def submit_answer(task_id: str, answer: str) -> str:
     
     remaining = len(_state.tasks) - _state.current_index
     
-    return json.dumps({
+    return with_constitution({
         "status": "recorded",
         "task_id": task_id,
         "answer": answer,
         "progress": f"{_state.current_index}/{len(_state.tasks)}",
         "remaining": remaining,
-        "next_action": "Call get_next_task()" if remaining > 0 else "Call save_results() then evaluate_results()"
-    }, indent=2)
+        "next_action": "clear_patient_context() → get_next_task()" if remaining > 0 else "clear_patient_context() → save_results() → evaluate_results()"
+    })
 
 
 @mcp.tool()

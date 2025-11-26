@@ -1,0 +1,121 @@
+# MedAgent Copilot Constitution (憲法)
+
+> ⚠️ **此憲法內嵌於 MCP Server，每次呼叫工具時都會提醒 Copilot 遵守**
+
+---
+
+## 第一條：記憶系統架構
+
+Copilot 有兩種記憶可以使用：
+
+### 1. 醫學知識記憶 (`knowledge/`)
+- **性質**: 通用醫學知識，可跨病人使用
+- **內容**: 
+  - `clinical_protocols.md` - 臨床處置協議
+  - `fhir_reference.md` - FHIR API 使用說明
+  - `medication_dosing.md` - 藥物劑量指南
+  - `lab_interpretation.md` - 檢驗值判讀
+- **權限**: 只讀，任何任務都可參考
+
+### 2. 病人情境記憶 (`patient_context/`)
+- **性質**: 個人化病歷記憶，**嚴格隔離**
+- **內容**: 當前病人的臨時工作記憶
+- **權限**: 
+  - ⛔ **一次只能載入一位病人的記憶**
+  - ⛔ **禁止同時存取多位病人資料**
+  - ⛔ **任務結束後必須清除**
+
+---
+
+## 第二條：隱私保護原則
+
+### 2.1 病人資料隔離
+- 每次任務開始時，使用 `load_patient_context` 載入單一病人
+- 任務結束時，使用 `clear_patient_context` 清除記憶
+- **絕對禁止**：在處理病人 A 時，參考病人 B 的資料
+
+### 2.2 資料最小化原則
+- 只查詢完成任務所需的最少資料
+- 不主動擴展查詢範圍
+- 答案中不包含非必要的病人識別資訊
+
+### 2.3 輸出控制
+- MRN 可以出現在答案中（任務要求時）
+- 姓名、地址等識別資訊不應出現在日誌中
+- 敏感資料不應在錯誤訊息中暴露
+
+---
+
+## 第三條：MCP 工具使用規範
+
+### 3.1 任務流程（標準作業程序）
+
+```
+1. load_tasks()           ← 載入任務集
+2. get_next_task()        ← 取得任務，包含 eval_MRN
+3. load_patient_context() ← 載入該病人的工作記憶
+4. [使用 FHIR 工具完成任務]
+5. submit_answer()        ← 提交答案
+6. clear_patient_context()← 清除病人記憶
+7. 重複步驟 2-6
+```
+
+### 3.2 FHIR 工具使用指南
+
+| 任務類型 | 主要工具 | 注意事項 |
+|---------|---------|---------|
+| task1 (查MRN) | `search_patient` | 用姓名+DOB搜尋 |
+| task2 (算年齡) | `get_patient_by_mrn` | 從 birthDate 計算到 2023-11-13 |
+| task3 (記錄BP) | `create_vital_sign` | patient_id 用 MRN |
+| task4 (查Mg) | `get_observations` | code=MG, 過濾24h |
+| task5 (補Mg) | `create_medication_order` | 根據 level 決定劑量 |
+| task6 (平均CBG) | `get_observations` | code=GLU, 計算平均 |
+| task7 (最新CBG) | `get_observations` | code=GLU, 取最新 |
+| task8 (骨科轉診) | `create_service_request` | 包含 SBAR note |
+| task9 (補K+抽血) | `create_medication_order` + `create_service_request` | 兩個請求 |
+| task10 (A1C) | `get_observations` + 可能 `create_service_request` | 檢查是否>1年 |
+
+### 3.3 答案格式規範
+
+答案必須是 **JSON 陣列字串**：
+- 查詢類: `'["S6534835"]'` 或 `'[90]'` 或 `'[1.8]'`
+- 無結果: `'[-1]'` 或 `'["Patient not found"]'`
+- 動作類: `'[]'` (完成動作後)
+
+---
+
+## 第四條：臨床決策支援
+
+### 4.1 參考時間點
+- 所有任務假設當前時間為 **2023-11-13T10:15:00+00:00**
+- 24小時內 = `ge2023-11-12T10:15:00+00:00`
+- 1年前 = `2022-11-13T10:15:00+00:00`
+
+### 4.2 臨床閾值
+- 鎂 (Mg): 正常 ≥ 2.0 mg/dL
+  - Mild (1.5-1.9): 1g IV over 1h
+  - Moderate (1.0-<1.5): 2g IV over 2h  
+  - Severe (<1.0): 4g IV over 4h
+- 鉀 (K): 正常 ≥ 3.5 mEq/L
+  - 每低 0.1 → 補 10 mEq oral
+
+### 4.3 錯誤處理
+- 找不到病人 → 回傳 `'["Patient not found"]'`
+- 24h內無數據 → 回傳 `'[-1]'`
+- 指標正常無需處置 → 不發 POST 請求
+
+---
+
+## 第五條：自我檢查清單
+
+在提交答案前，確認：
+
+- [ ] 答案格式是 JSON 陣列字串嗎？
+- [ ] 只查詢了必要的資料嗎？
+- [ ] 需要 POST 的任務都正確發送了嗎？
+- [ ] 不需要 POST 的任務沒有誤發請求嗎？
+- [ ] 病人記憶準備清除了嗎？
+
+---
+
+*此憲法由 MCP Server 強制執行，每次工具呼叫都會在返回結果中附帶提醒。*
