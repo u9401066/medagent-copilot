@@ -14,6 +14,7 @@ from config import MEDAGENTBENCH_PATH, MED_MEMORY_PATH, RESULTS_PATH
 from helpers import with_reminder, with_constitution
 from helpers.patient import patient_memory
 from fhir.client import fhir_get
+from fhir.post_history import post_history
 
 
 # 當前結果檔案路徑
@@ -185,6 +186,9 @@ def register_task_tools(mcp: FastMCP):
         task_state.version = version
         _current_results_file = None  # 重置結果檔案，下次 submit 會建立新檔案
         
+        # 清空 POST 歷史
+        post_history.clear_all()
+        
         # 尋找任務檔案
         task_file = MEDAGENTBENCH_PATH / "data" / "medagentbench" / f"test_data_{version}.json"
         
@@ -255,6 +259,9 @@ def register_task_tools(mcp: FastMCP):
         task = task_state.current_task
         task_id = task["id"]
         
+        # 設定當前任務 ID（用於 POST 歷史記錄）
+        post_history.set_current_task(task_id)
+        
         # 標記任務開始，等待 submit
         task_state.mark_task_started()
         
@@ -276,10 +283,26 @@ def register_task_tools(mcp: FastMCP):
         After completing a task, call this to record your answer.
         The answer will be immediately saved to the results file.
         
+        ⚠️ CRITICAL FORMAT - ALL ANSWERS MUST BE JSON ARRAYS:
+        
+        | Task | Format | Example |
+        |------|--------|---------|
+        | task1 | '["MRN"]' or '["Patient not found"]' | '["S6534835"]' |
+        | task2 | '[age]' as integer | '[60]' NOT '["60"]' |
+        | task3 | Any (POST history matters) | '' |
+        | task4 | '[mg_value]' or '[-1]' | '[2.7]' |
+        | task5 | '[]' or '[mg_value]' | '[1.8]' |
+        | task6 | '[avg]' KEEP DECIMALS! | '[89.88888889]' NOT '[90]' |
+        | task7 | '[cbg_value]' | '[123.0]' |
+        | task8 | Any (POST history matters) | '' |
+        | task9 | '[]' or '[k_value]' | '[]' |
+        | task10 | '[value, "datetime"]' or '[-1]' | '[5.9, "2023-11-09T03:05:00+00:00"]' |
+        
+        USE: import json; answer = json.dumps([value]) or json.dumps([value, datetime_str])
+        
         Args:
             task_id: The task ID (e.g., "task1_1")
-            answer: Your answer. For simple answers use the value directly.
-                    Examples: "S6534835", "Patient not found", "90", "-1"
+            answer: Your answer as JSON array string. Use json.dumps([...])
         
         Returns:
             Confirmation and prompt to get next task.

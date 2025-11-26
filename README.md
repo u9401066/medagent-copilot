@@ -1,110 +1,164 @@
 # MedAgent Copilot
 
-使用 MCP (Model Context Protocol) 讓 GitHub Copilot 成為醫療 Agent，回答 MedAgentBench 的 FHIR 任務。
+使用 MCP (Model Context Protocol) 讓 GitHub Copilot 成為醫療 Agent，執行 MedAgentBench FHIR 任務。
 
-## 專案架構
+## 🏗️ 專案架構
 
 ```
 medagent-copilot/
-├── .med_memory/           # Copilot 記憶區塊
-│   ├── task_instructions.md    # 任務執行指引
-│   ├── fhir_functions.md       # FHIR API 說明
-│   ├── task_examples.md        # 任務範例
-│   └── clinical_knowledge.md   # 臨床知識參考
-├── .vscode/
-│   └── mcp.json           # MCP Server 設定
+├── .med_memory/              # Copilot 記憶系統
+│   ├── CONSTITUTION.md       # 🔒 Agent 憲法（規則與格式）
+│   ├── knowledge/            # 📚 醫學知識庫
+│   │   ├── clinical_protocols.md
+│   │   ├── fhir_reference.md
+│   │   └── medication_dosing.md
+│   └── patient_context/      # 🔐 病人情境記憶（隔離區）
 ├── src/
-│   └── mcp_server.py      # Python MCP Server (FHIR 工具)
+│   ├── mcp_server.py         # MCP Server 入口
+│   ├── config.py             # 設定檔
+│   ├── fhir/                 # FHIR 工具
+│   │   ├── client.py         # FHIR API 客戶端
+│   │   ├── tools.py          # FHIR MCP 工具
+│   │   └── post_history.py   # POST 歷史追蹤
+│   ├── tasks/                # 任務管理
+│   │   ├── tools.py          # 任務 MCP 工具
+│   │   └── state.py          # 任務狀態追蹤
+│   └── helpers/              # 輔助工具
+│       ├── reminder.py       # 格式提醒系統
+│       └── patient.py        # 病人記憶管理
+├── results/                  # 評估結果
+├── evaluate_with_official.py # 官方評估腳本
 └── requirements.txt
 ```
 
-## 安裝
+## 🚀 快速開始
 
-### 1. 建立 Python 虛擬環境
+### 1. 環境設定
 
 ```bash
 cd medagent-copilot
 python -m venv venv
-source venv/bin/activate  # Linux/Mac
-# 或 venv\Scripts\activate  # Windows
-```
-
-### 2. 安裝依賴
-
-```bash
+source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 3. 啟動 FHIR 伺服器 (MedAgentBench)
+### 2. 啟動 FHIR 伺服器
 
 ```bash
-# 在另一個終端機
 docker run -p 8080:8080 jyxsu6/medagentbench:latest
 ```
 
-### 4. 在 VS Code 中啟用 MCP
+### 3. VS Code MCP 設定
 
-1. 開啟此專案資料夾
-2. VS Code 會自動讀取 `.vscode/mcp.json`
-3. 在 Copilot Chat 中使用 `@medagent-fhir` 來呼叫 FHIR 工具
+確保 `.vscode/mcp.json` 正確設定：
 
-## 使用方式
-
-### 在 Copilot Chat 中
-
-1. 開啟 Copilot Chat (Ctrl+Shift+I 或 Cmd+Shift+I)
-2. 使用 Agent 模式
-3. 輸入 MedAgentBench 任務問題
-
-### 範例對話
-
-```
-User: What's the MRN of the patient with name Peter Stafford and DOB of 1932-12-29?
-
-Copilot: 我會使用 search_patient 工具來查詢...
-[呼叫 search_patient]
-找到病患 MRN: S6534835
-
-FINISH(["S6534835"])
+```json
+{
+  "mcpServers": {
+    "medagent-fhir": {
+      "command": "python",
+      "args": ["src/mcp_server.py"],
+      "cwd": "${workspaceFolder}"
+    }
+  }
+}
 ```
 
-## MCP 工具說明
+## 📋 MCP 工具一覽
 
-| 工具名稱 | 說明 |
-|---------|------|
-| `search_patient` | 搜尋病患資訊 |
-| `get_patient_by_mrn` | 根據 MRN 取得 FHIR ID |
-| `get_observations` | 查詢檢驗/生命徵象 |
-| `create_vital_sign` | 記錄生命徵象 |
-| `create_medication_order` | 開立藥物醫囑 |
-| `create_service_request` | 開立轉診/檢驗單 |
-| `get_conditions` | 查詢問題清單 |
-| `get_medication_requests` | 查詢藥物醫囑 |
+### 任務管理工具
+| 工具 | 說明 |
+|------|------|
+| `load_tasks` | 載入 MedAgentBench 任務 (v1/v2) |
+| `get_next_task` | 取得下一個任務 |
+| `submit_answer` | 提交答案（自動保存） |
+| `get_task_status` | 查看進度 |
+| `evaluate_results` | 評估結果 |
 
-## 記憶區塊 (.med_memory)
+### FHIR 工具
+| 工具 | 說明 |
+|------|------|
+| `search_patient` | 搜尋病患 |
+| `get_patient_by_mrn` | 用 MRN 查 FHIR ID |
+| `get_lab_observations` | 查檢驗值 (MG, K, GLU, A1C...) |
+| `get_vital_signs` | 查生命徵象 |
+| `create_vital_sign` | 記錄 BP |
+| `create_medication_order` | 開藥 |
+| `create_service_request` | 轉診/抽血單 |
 
-這個資料夾包含 Copilot 需要的背景知識：
+### 記憶工具
+| 工具 | 說明 |
+|------|------|
+| `get_constitution` | 取得 Agent 憲法 |
+| `load_patient_context` | 載入病人記憶 |
+| `add_patient_note` | 新增病人筆記 |
 
-- **task_instructions.md**: 任務類型和回應格式說明
-- **fhir_functions.md**: FHIR API 詳細說明和範例
-- **task_examples.md**: 完整的任務範例流程
-- **clinical_knowledge.md**: 臨床參考值和計算規則
+## 📊 答案格式（重要！）
 
-## 與 MedAgentBench 整合
+所有答案必須是 **JSON 陣列**：
 
-要與 MedAgentBench 進行正式評測，需要：
+| 任務 | 格式 | 範例 |
+|------|------|------|
+| task1 | `["MRN"]` | `["S6534835"]` |
+| task2 | `[age]` | `[60]` |
+| task3 | POST 歷史 | - |
+| task4 | `[mg]` 或 `[-1]` | `[2.7]` |
+| task5 | `[]` 或 `[mg]` | `[1.8]` |
+| task6 | `[avg]` 保留小數 | `[89.888889]` |
+| task7 | `[cbg]` | `[123.0]` |
+| task8 | POST 歷史 | - |
+| task9 | `[]` 或 `[k]` | `[]` |
+| task10 | `[val, "datetime"]` | `[5.9, "2023-11-09T03:05:00+00:00"]` |
 
-1. 建立一個 HTTP Agent 介面
-2. 透過 VS Code Extension API 呼叫 Copilot
-3. 將回應轉換為 MedAgentBench 格式
+## 🔄 任務流程
 
-詳見 `src/agent/` 目錄中的整合程式碼。
+```
+load_tasks(version="v1")
+    ↓
+get_next_task()
+    ↓
+[使用 FHIR 工具完成任務]
+    ↓
+submit_answer(task_id, json.dumps([answer]))
+    ↓
+(重複直到完成)
+    ↓
+evaluate_results()
+```
 
-## 環境變數
+## 📈 評估
 
-| 變數 | 預設值 | 說明 |
-|------|--------|------|
-| `FHIR_API_BASE` | `http://localhost:8080/fhir/` | FHIR 伺服器位址 |
+使用官方 MedAgentBench 評估器：
+
+```bash
+python evaluate_with_official.py
+```
+
+## 🧠 記憶系統
+
+### CONSTITUTION.md (憲法)
+- 定義 Agent 行為規則
+- 隱私保護原則
+- 答案格式規範
+- 臨床閾值參考
+
+### knowledge/ (知識庫)
+- 通用醫學知識
+- 可跨病人使用
+
+### patient_context/ (病人記憶)
+- ⚠️ 嚴格隔離
+- 一次只能載入一位病人
+- 任務結束後清除
+
+## 📝 關鍵參數
+
+| 參數 | 值 |
+|------|-----|
+| FHIR Base | `http://localhost:8080/fhir/` |
+| 參考時間 | `2023-11-13T10:15:00+00:00` |
+| 24h 過濾 | `ge2023-11-12T10:15:00+00:00` |
+| 1 年前 | `2022-11-13T10:15:00+00:00` |
 
 ## License
 

@@ -10,10 +10,19 @@ import json
 from pathlib import Path
 
 # 核心提醒 - 精簡版，每次都顯示
-CORE_REMINDER = """📜 REMEMBER:
-- One patient at a time
-- Check med://knowledge/clinical for thresholds & dosing
-- Answer format: JSON array like '["value"]' or '[90]' or '[-1]' or '[]'"""
+CORE_REMINDER = """📜 ANSWER FORMAT (all must be JSON arrays):
+| Task | Format | Example |
+|------|--------|---------|
+| task1 | ["MRN"] | ["S6534835"] |
+| task2 | [age_int] | [60] |
+| task4 | [mg_float] or [-1] | [2.7] |
+| task5 | [] or [mg_value] | [1.8] |
+| task6 | [avg_float] (keep decimals!) | [89.888889] |
+| task7 | [cbg_float] | [123.0] |
+| task9 | [] or [k_value] | [] |
+| task10 | [value, "datetime"] or [-1] | [5.9, "2023-11-09T03:05:00+00:00"] |
+
+⚠️ CRITICAL: Use json.dumps([value]) to format answer!"""
 
 
 def load_constitution() -> str:

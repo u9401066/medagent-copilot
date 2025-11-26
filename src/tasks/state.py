@@ -55,13 +55,20 @@ class TaskState:
             task_data: 原始任務資料
         """
         from datetime import datetime
+        from fhir.post_history import post_history
+        
+        # 生成官方格式的 POST 歷史
+        official_history = post_history.generate_official_history(task_id)
         
         self.results.append({
             "task_id": task_id,
             "answer": answer,
             "expected_sol": task_data.get("sol"),
             "eval_MRN": task_data.get("eval_MRN"),
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now().isoformat(),
+            # 官方評估器需要的格式
+            "post_history": official_history,
+            "post_count": post_history.get_post_count_for_task(task_id)
         })
         self.current_index += 1
         self.awaiting_submit = False  # 解鎖，允許 get_next_task

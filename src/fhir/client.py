@@ -2,6 +2,7 @@
 FHIR Client - FHIR API 連線與請求
 
 提供 GET/POST 請求方法給 FHIR Server
+自動記錄 POST 歷史以供官方評估器驗證
 """
 
 from typing import Any
@@ -39,6 +40,8 @@ async def fhir_get(endpoint: str, params: dict = None) -> dict[str, Any] | None:
 async def fhir_post(endpoint: str, data: dict) -> dict[str, Any] | None:
     """發送 FHIR POST 請求
     
+    自動記錄 POST 到歷史，供官方評估器驗證
+    
     Args:
         endpoint: FHIR 端點
         data: 要傳送的 FHIR Resource
@@ -46,6 +49,8 @@ async def fhir_post(endpoint: str, data: dict) -> dict[str, Any] | None:
     Returns:
         建立的 Resource 或錯誤 dict
     """
+    from fhir.post_history import post_history
+    
     url = f"{FHIR_API_BASE.rstrip('/')}/{endpoint}"
     async with httpx.AsyncClient() as client:
         try:
@@ -56,6 +61,12 @@ async def fhir_post(endpoint: str, data: dict) -> dict[str, Any] | None:
                 timeout=30.0
             )
             response.raise_for_status()
-            return response.json()
+            result = response.json()
+            
+            # 記錄 POST 歷史
+            resource_id = result.get("id", "unknown")
+            post_history.record_post(url, data, resource_id)
+            
+            return result
         except Exception as e:
             return {"error": str(e)}
