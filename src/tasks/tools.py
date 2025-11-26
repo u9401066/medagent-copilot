@@ -19,6 +19,7 @@ from fhir.post_history import post_history
 
 # 當前結果檔案路徑
 _current_results_file = None
+_current_round = "r2"  # 當前測試輪次
 
 
 def _save_results_to_file():
@@ -35,11 +36,12 @@ def _save_results_to_file():
     if _current_results_file is None:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         version = task_state.version or "unknown"
-        _current_results_file = RESULTS_PATH / f"results_{version}_{timestamp}.json"
+        _current_results_file = RESULTS_PATH / f"results_{version}_{_current_round}_{timestamp}.json"
     
     # 寫入檔案
     output_data = {
         "version": task_state.version,
+        "round": _current_round,
         "timestamp": datetime.now().isoformat(),
         "total_tasks": len(task_state.results),
         "results": task_state.results
@@ -384,9 +386,9 @@ def register_task_tools(mcp: FastMCP):
     
     @mcp.tool()
     async def evaluate_results(results_file: str = None) -> str:
-        """Evaluate saved results against expected answers.
+        """Evaluate saved results using OFFICIAL MedAgentBench evaluator.
         
-        Compares your answers with the expected solutions from the task file.
+        This calls the official refsol.py evaluation functions.
         
         Args:
             results_file: Path to results JSON file. If not specified, uses the most recent.
@@ -394,11 +396,40 @@ def register_task_tools(mcp: FastMCP):
         Returns:
             Evaluation summary with accuracy and details.
         """
+        import sys
+        from dataclasses import dataclass, field
+        from typing import List
+        
+        # 添加 MedAgentBench 到路徑
+        sys.path.insert(0, str(MEDAGENTBENCH_PATH))
+        sys.path.insert(0, str(MEDAGENTBENCH_PATH / "src"))
+        
+        FHIR_BASE = "http://localhost:8080/fhir/"
+        
+        # 模擬官方類型
+        @dataclass
+        class ChatHistoryItem:
+            role: str
+            content: str
+        
+        @dataclass
+        class TaskOutput:
+            result: str = None
+            history: List[ChatHistoryItem] = field(default_factory=list)
+        
+        def build_official_result(result_entry: dict) -> TaskOutput:
+            answer = result_entry["answer"]
+            post_hist = result_entry.get("post_history", [])
+            history = [ChatHistoryItem(role=e["role"], content=e["content"]) for e in post_hist]
+            return TaskOutput(result=answer, history=history)
+        
+        # 導入官方評估器
+        from src.server.tasks.medagentbench.eval import eval as official_eval
+        
         # 找到結果檔案
         if results_file:
             result_path = Path(results_file)
         else:
-            # 找最新的結果檔案
             result_files = list(RESULTS_PATH.glob("results_*.json"))
             if not result_files:
                 return json.dumps({"error": "No result files found. Run save_results first."})
@@ -413,74 +444,68 @@ def register_task_tools(mcp: FastMCP):
         results_list = results_data.get("results", [])
         version = results_data.get("version", "v1")
         
-        # 載入對應的任務資料
+        # 載入任務資料
         task_file = MEDAGENTBENCH_PATH / "data" / "medagentbench" / f"test_data_{version}.json"
-        if not task_file.exists():
-            return json.dumps({"error": f"Task file not found: {task_file}"})
-        
         with open(task_file) as f:
             all_tasks = json.load(f)
-        
         task_dict = {t["id"]: t for t in all_tasks}
         
-        # 評估結果
-        correct_by_type = {}
-        total_by_type = {}
+        # 使用官方評估器
+        stats = {}
         details = []
         
         for r in results_list:
             task_id = r["task_id"]
-            answer = r["answer"]
             task_type = task_id.split("_")[0]
             
-            task_data = task_dict.get(task_id, {})
-            expected = task_data.get("sol", [])
+            if task_type not in stats:
+                stats[task_type] = {"correct": 0, "total": 0}
+            stats[task_type]["total"] += 1
             
-            # 初始化統計
-            if task_type not in correct_by_type:
-                correct_by_type[task_type] = 0
-                total_by_type[task_type] = 0
+            case_data = task_dict.get(task_id, {}).copy()
+            case_data["eval_MRN"] = r.get("eval_MRN")
+            case_data["id"] = task_id
             
-            total_by_type[task_type] += 1
+            official_result = build_official_result(r)
             
-            # 比對答案
             try:
-                answer_parsed = json.loads(answer) if isinstance(answer, str) else answer
-            except:
-                answer_parsed = answer
-            
-            is_correct = answer_parsed == expected or [answer_parsed] == expected
+                is_correct = official_eval(case_data, official_result, FHIR_BASE)
+                if is_correct is None:
+                    is_correct = False
+            except Exception as e:
+                is_correct = False
             
             if is_correct:
-                correct_by_type[task_type] += 1
+                stats[task_type]["correct"] += 1
             
             details.append({
                 "task_id": task_id,
-                "expected": expected,
-                "actual": answer,
-                "correct": is_correct
+                "correct": is_correct,
+                "answer": r["answer"],
+                "post_count": r.get("post_count", 0)
             })
         
-        # 計算總體準確率
-        total_correct = sum(correct_by_type.values())
-        total_count = sum(total_by_type.values())
-        accuracy = total_correct / total_count if total_count > 0 else 0
+        # 計算總體
+        total_correct = sum(s["correct"] for s in stats.values())
+        total_count = sum(s["total"] for s in stats.values())
         
-        # 按類型統計
         type_stats = {}
-        for t in sorted(total_by_type.keys()):
+        for t in sorted(stats.keys()):
+            s = stats[t]
+            pct = s["correct"] / s["total"] * 100 if s["total"] > 0 else 0
             type_stats[t] = {
-                "correct": correct_by_type[t],
-                "total": total_by_type[t],
-                "accuracy": f"{correct_by_type[t]/total_by_type[t]:.2%}" if total_by_type[t] > 0 else "N/A"
+                "correct": s["correct"],
+                "total": s["total"],
+                "accuracy": f"{pct:.0f}%"
             }
         
         # 儲存評估結果
-        eval_file = RESULTS_PATH / f"eval_{result_path.stem}.json"
+        eval_file = RESULTS_PATH / f"official_eval_{result_path.stem}.json"
         eval_data = {
             "timestamp": datetime.now().isoformat(),
             "source_file": str(result_path),
-            "overall_accuracy": f"{accuracy:.2%}",
+            "evaluator": "official_refsol.py",
+            "overall_accuracy": f"{total_correct/total_count*100:.1f}%",
             "correct": total_correct,
             "total": total_count,
             "by_task_type": type_stats,
@@ -490,13 +515,18 @@ def register_task_tools(mcp: FastMCP):
         with open(eval_file, "w") as f:
             json.dump(eval_data, f, indent=2, ensure_ascii=False)
         
+        # 找出錯誤
+        incorrect = [d for d in details if not d["correct"]]
+        
         return json.dumps({
-            "overall_accuracy": f"{accuracy:.2%}",
+            "evaluator": "OFFICIAL MedAgentBench refsol.py",
+            "overall_accuracy": f"{total_correct/total_count*100:.1f}%",
             "correct": total_correct,
             "total": total_count,
             "by_task_type": type_stats,
-            "evaluation_file": str(eval_file),
-            "note": "For write tasks (3,5,8,9,10), run official eval script for accurate grading."
+            "incorrect_count": len(incorrect),
+            "incorrect_samples": incorrect[:10],
+            "evaluation_file": str(eval_file)
         }, indent=2)
     
     

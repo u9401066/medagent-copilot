@@ -62,22 +62,41 @@ def build_official_result(result_entry: dict) -> TaskOutput:
 
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser(description='Evaluate MedAgentBench results')
+    parser.add_argument('--version', '-v', type=str, default=None, 
+                        help='Version to evaluate (v1 or v2). Auto-detect if not specified.')
+    parser.add_argument('--file', '-f', type=str, default=None,
+                        help='Specific results file to evaluate')
+    args = parser.parse_args()
+    
     # 導入官方評估器
     from src.server.tasks.medagentbench.eval import eval as official_eval
     
     # 載入結果檔案
-    results_files = list(RESULTS_PATH.glob("results_v1_*.json"))
-    if not results_files:
-        print("No results file found")
-        return
+    if args.file:
+        results_file = Path(args.file)
+    else:
+        # 根據版本找檔案
+        if args.version:
+            pattern = f"results_{args.version}_*.json"
+        else:
+            pattern = "results_*.json"
+        
+        results_files = list(RESULTS_PATH.glob(pattern))
+        if not results_files:
+            print(f"No results file found matching {pattern}")
+            return
+        
+        results_file = max(results_files, key=lambda p: p.stat().st_mtime)
     
-    results_file = max(results_files, key=lambda p: p.stat().st_mtime)
     print(f"📁 Evaluating: {results_file}")
     
     with open(results_file) as f:
         data = json.load(f)
     
     results_list = data["results"]
+    version = data.get("version", "v1")
     
     # 載入任務資料
     task_file = MEDAGENTBENCH_PATH / "data" / "medagentbench" / "test_data_v1.json"
