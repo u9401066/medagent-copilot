@@ -30,6 +30,7 @@ class PatientMemory:
         """載入病人記憶
         
         如果該病人之前有記憶，會載入歷史筆記。
+        如果是新病人，會自動建立空白記憶檔案。
         
         Args:
             mrn: 病人 MRN
@@ -52,7 +53,9 @@ class PatientMemory:
                 if not fhir_id and data.get("fhir_id"):
                     self.current_fhir_id = data["fhir_id"]
         else:
+            # 新病人 - 建立空白記憶檔案
             self.notes = []
+            self._save()  # 自動建立空白檔案
         
         return self.get_memory()
     

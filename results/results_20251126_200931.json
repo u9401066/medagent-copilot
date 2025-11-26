@@ -1,0 +1,21 @@
+{
+  "timestamp": "2025-11-26T20:09:31.201639",
+  "total_tasks": 3,
+  "results": [
+    {
+      "task_id": "task1_1",
+      "answer": "S6534835",
+      "timestamp": "2025-11-26T20:07:51.277869"
+    },
+    {
+      "task_id": "task1_2",
+      "answer": "S6426560",
+      "timestamp": "2025-11-26T20:08:05.671299"
+    },
+    {
+      "task_id": "task1_3",
+      "answer": "S1986380",
+      "timestamp": "2025-11-26T20:08:19.048705"
+    }
+  ]
+}
