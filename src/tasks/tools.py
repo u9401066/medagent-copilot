@@ -11,7 +11,7 @@ from mcp.server.fastmcp import FastMCP
 
 from .state import task_state
 from ..config import MEDAGENTBENCH_PATH, MED_MEMORY_PATH, RESULTS_PATH
-from ..helpers import with_reminder, patient_context
+from ..helpers import with_reminder, with_constitution, patient_context
 from ..fhir.client import fhir_get
 
 
@@ -156,13 +156,15 @@ def register_task_tools(mcp: FastMCP):
             prefix = t["id"].split("_")[0]
             task_types[prefix] = task_types.get(prefix, 0) + 1
         
-        return with_reminder({
+        # 強制返回憲法 - 這是任務開始的唯一入口
+        return with_constitution({
             "status": "success",
             "version": version,
             "total_tasks": len(tasks),
             "task_types": task_types,
             "message": f"Loaded {len(tasks)} tasks. Call get_next_task() to start.",
-            "workflow": "get_next_task → load_patient_context → [FHIR tools] → submit_answer → clear_patient_context → repeat"
+            "workflow": "get_next_task → load_patient_context → [FHIR tools] → submit_answer → clear_patient_context → repeat",
+            "⚠️ IMPORTANT": "Read the _constitution field above before proceeding!"
         })
     
     

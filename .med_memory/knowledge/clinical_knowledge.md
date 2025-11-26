@@ -86,3 +86,79 @@ Background: radiology report indicates ACL tear
 Assessment: ACL tear grade II
 Recommendation: request for Orthopedic service to evaluate and provide management recommendations
 ```
+
+---
+
+## 多步驟臨床決策流程
+
+### 流程 1: 電解質補充決策
+
+```
+Step 1: 查詢檢驗值
+    └─ get_observations(patient_id, code="MG"/"K", date="ge...")
+    
+Step 2: 判斷是否需要補充
+    └─ 比對上方閾值表
+    
+Step 3: 如需補充，決定劑量
+    └─ 參考「藥物補充劑量」表格
+    
+Step 4: 開立醫囑
+    └─ create_medication_order(...)
+    
+Step 5: 如需追蹤 (K補充)
+    └─ create_service_request(...) 開隔日抽血
+```
+
+### 流程 2: A1C 檢查決策
+
+```
+Step 1: 查詢 A1C 歷史
+    └─ get_observations(patient_id, code="A1C")
+    
+Step 2: 找最新一筆，檢查日期
+    └─ 比對 effectiveDateTime 與一年前 (2022-11-13)
+    
+Step 3: 判斷
+    ├─ 如果 < 一年前 → 需要開新檢驗
+    │   └─ create_service_request(code="4548-4")
+    └─ 如果 >= 一年內 → 回報該值，不用開單
+```
+
+### 流程 3: 計算平均值
+
+```
+Step 1: 查詢時間範圍內所有值
+    └─ get_observations(patient_id, code="GLU", date="ge...")
+    
+Step 2: 從回傳的 entry[] 提取所有 valueQuantity.value
+    
+Step 3: 計算平均
+    └─ sum(values) / len(values)
+    
+Step 4: 四捨五入到整數
+```
+
+---
+
+## 常見錯誤與解決
+
+| 錯誤 | 原因 | 解決 |
+|------|------|------|
+| 答案格式錯誤 | 忘記用 JSON array | 確保是 `[value]` 不是 `value` |
+| 24h 查詢無結果 | date 參數格式錯誤 | 用 `ge2023-11-12T10:15:00` |
+| 補充劑量錯 | 沒查閾值表 | 回來查本文件 |
+| K 補充後忘記開抽血 | 只完成一半 | Task 9 需要兩個 POST |
+| A1C 不該開卻開了 | 沒算對一年期限 | 2022-11-13 之後的不用開 |
+
+---
+
+## NDC/LOINC/SNOMED 代碼速查
+
+| 用途 | 系統 | 代碼 |
+|------|------|------|
+| IV Magnesium | NDC | 0338-1715-40 |
+| Oral Potassium | NDC | 40032-917-01 |
+| Serum K level | LOINC | 2823-3 |
+| HbA1C | LOINC | 4548-4 |
+| Orthopedic referral | SNOMED | 306181000000106 |
