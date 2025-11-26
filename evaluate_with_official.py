@@ -98,8 +98,8 @@ def main():
     results_list = data["results"]
     version = data.get("version", "v1")
     
-    # 載入任務資料
-    task_file = MEDAGENTBENCH_PATH / "data" / "medagentbench" / "test_data_v1.json"
+    # 載入任務資料 - 根據版本選擇正確的測試檔案
+    task_file = MEDAGENTBENCH_PATH / "data" / "medagentbench" / f"test_data_{version}.json"
     with open(task_file) as f:
         all_tasks = json.load(f)
     task_dict = {t["id"]: t for t in all_tasks}
