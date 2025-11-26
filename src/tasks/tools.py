@@ -11,7 +11,7 @@ from mcp.server.fastmcp import FastMCP
 
 from .state import task_state
 from ..config import MEDAGENTBENCH_PATH, MED_MEMORY_PATH, RESULTS_PATH
-from ..memory import with_constitution, patient_context
+from ..helpers import with_reminder, patient_context
 from ..fhir.client import fhir_get
 
 
@@ -64,7 +64,7 @@ def register_task_tools(mcp: FastMCP):
         
         patient_context.load(mrn, fhir_id, task_id)
         
-        return with_constitution({
+        return with_reminder({
             "status": "loaded",
             "mrn": mrn,
             "fhir_id": fhir_id,
@@ -82,12 +82,12 @@ def register_task_tools(mcp: FastMCP):
         """
         context = patient_context.get_current()
         if not context:
-            return with_constitution({
+            return with_reminder({
                 "status": "no_patient_loaded",
                 "message": "No patient context loaded. Call load_patient_context first."
             })
         
-        return with_constitution({
+        return with_reminder({
             "status": "active",
             **context
         })
@@ -106,7 +106,7 @@ def register_task_tools(mcp: FastMCP):
         previous_mrn = patient_context.current_mrn
         patient_context.clear()
         
-        return with_constitution({
+        return with_reminder({
             "status": "cleared",
             "previous_mrn": previous_mrn,
             "message": "Patient context cleared. Ready for next patient."
@@ -156,7 +156,7 @@ def register_task_tools(mcp: FastMCP):
             prefix = t["id"].split("_")[0]
             task_types[prefix] = task_types.get(prefix, 0) + 1
         
-        return with_constitution({
+        return with_reminder({
             "status": "success",
             "version": version,
             "total_tasks": len(tasks),
@@ -188,11 +188,12 @@ def register_task_tools(mcp: FastMCP):
             })
         
         task = task_state.current_task
+        task_id = task["id"]
         
-        return with_constitution({
+        return with_reminder({
             "task_number": task_state.current_index + 1,
             "total_tasks": len(task_state.tasks),
-            "task_id": task["id"],
+            "task_id": task_id,
             "instruction": task["instruction"],
             "context": task.get("context", ""),
             "eval_MRN": task.get("eval_MRN", ""),
@@ -237,7 +238,7 @@ def register_task_tools(mcp: FastMCP):
         
         remaining = task_state.remaining
         
-        return with_constitution({
+        return with_reminder({
             "status": "recorded",
             "task_id": task_id,
             "answer": answer,

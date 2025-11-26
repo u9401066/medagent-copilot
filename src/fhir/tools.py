@@ -6,7 +6,7 @@ FHIR Tools - FHIR Query 與 Write 工具
 
 from mcp.server.fastmcp import FastMCP
 from .client import fhir_get, fhir_post
-from ..memory import with_constitution
+from ..helpers import with_reminder
 
 
 def register_fhir_tools(mcp: FastMCP):
@@ -53,9 +53,9 @@ def register_fhir_tools(mcp: FastMCP):
         data = await fhir_get("Patient", params)
         
         if not data or "error" in data:
-            return with_constitution({"error": "Unable to search patients", "details": data})
+            return with_reminder({"error": "Unable to search patients", "details": data})
         
-        return with_constitution(data)
+        return with_reminder(data)
     
     
     @mcp.tool()
@@ -71,7 +71,7 @@ def register_fhir_tools(mcp: FastMCP):
         data = await fhir_get("Patient", {"identifier": mrn})
         
         if not data or "error" in data or not data.get("entry"):
-            return with_constitution({"error": "Patient not found", "mrn": mrn})
+            return with_reminder({"error": "Patient not found", "mrn": mrn})
         
         patient = data["entry"][0]["resource"]
         summary = {
@@ -81,7 +81,7 @@ def register_fhir_tools(mcp: FastMCP):
             "birthDate": patient.get("birthDate"),
             "gender": patient.get("gender"),
         }
-        return with_constitution(summary)
+        return with_reminder(summary)
     
     
     @mcp.tool()
@@ -119,9 +119,9 @@ def register_fhir_tools(mcp: FastMCP):
         data = await fhir_get("Observation", params)
         
         if not data or "error" in data:
-            return with_constitution({"error": "Unable to fetch observations", "details": data})
+            return with_reminder({"error": "Unable to fetch observations", "details": data})
         
-        return with_constitution(data)
+        return with_reminder(data)
     
     
     @mcp.tool()
@@ -139,9 +139,9 @@ def register_fhir_tools(mcp: FastMCP):
         data = await fhir_get("Condition", params)
         
         if not data or "error" in data:
-            return with_constitution({"error": "Unable to fetch conditions", "details": data})
+            return with_reminder({"error": "Unable to fetch conditions", "details": data})
         
-        return with_constitution(data)
+        return with_reminder(data)
     
     
     @mcp.tool()
@@ -162,9 +162,9 @@ def register_fhir_tools(mcp: FastMCP):
         data = await fhir_get("MedicationRequest", params)
         
         if not data or "error" in data:
-            return with_constitution({"error": "Unable to fetch medication requests", "details": data})
+            return with_reminder({"error": "Unable to fetch medication requests", "details": data})
         
-        return with_constitution(data)
+        return with_reminder(data)
     
     
     # ============ FHIR Write Tools ============
@@ -206,9 +206,9 @@ def register_fhir_tools(mcp: FastMCP):
         result = await fhir_post("Observation", observation)
         
         if not result or "error" in result:
-            return with_constitution({"error": "Failed to create vital sign observation", "details": result})
+            return with_reminder({"error": "Failed to create vital sign observation", "details": result})
         
-        return with_constitution(result)
+        return with_reminder(result)
     
     
     @mcp.tool()
@@ -287,9 +287,9 @@ def register_fhir_tools(mcp: FastMCP):
         result = await fhir_post("MedicationRequest", medication_request)
         
         if not result or "error" in result:
-            return with_constitution({"error": "Failed to create medication order", "details": result})
+            return with_reminder({"error": "Failed to create medication order", "details": result})
         
-        return with_constitution(result)
+        return with_reminder(result)
     
     
     @mcp.tool()
@@ -347,6 +347,6 @@ def register_fhir_tools(mcp: FastMCP):
         result = await fhir_post("ServiceRequest", service_request)
         
         if not result or "error" in result:
-            return with_constitution({"error": "Failed to create service request", "details": result})
+            return with_reminder({"error": "Failed to create service request", "details": result})
         
-        return with_constitution(result)
+        return with_reminder(result)

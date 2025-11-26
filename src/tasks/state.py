@@ -4,7 +4,7 @@ Task State - 任務狀態追蹤
 管理任務載入、進度和結果
 """
 
-from ..memory.context import patient_context
+from ..helpers.patient import patient_context
 
 
 class TaskState:
