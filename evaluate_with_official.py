@@ -2,18 +2,14 @@
 """
 使用官方 MedAgentBench 評估器
 
-這個腳本：
-1. 讀取我們的結果檔案
-2. 將其轉換為官方 TaskOutput 格式
-3. 直接調用官方 eval.py 進行評估
+這個腳本直接使用官方的 eval.py 進行評估
+**不做任何資料格式轉換** - MCP 輸出的格式必須與官方完全一致
 """
 
 import json
 import sys
 from datetime import datetime
 from pathlib import Path
-from dataclasses import dataclass, field
-from typing import List, Literal
 
 # 添加 MedAgentBench 到路徑
 MEDAGENTBENCH_PATH = Path("/home/eric/workspace251126/MedAgentBench")
@@ -23,41 +19,25 @@ sys.path.insert(0, str(MEDAGENTBENCH_PATH / "src"))
 FHIR_BASE = "http://localhost:8080/fhir/"
 RESULTS_PATH = Path("/home/eric/workspace251126/medagent-copilot/results")
 
-
-# ============ 模擬官方類型 ============
-
-@dataclass
-class ChatHistoryItem:
-    """官方 ChatHistoryItem 格式"""
-    role: str  # "user" 或 "agent"
-    content: str
-
-
-@dataclass
-class TaskOutput:
-    """官方 TaskOutput 格式"""
-    result: str = None  # FINISH 中的內容
-    history: List[ChatHistoryItem] = field(default_factory=list)
-    status: str = "COMPLETED"
-    index: int = None
+# 使用官方類型 - 不自定義任何格式
+from src.typings.general import ChatHistoryItem
+from src.typings.output import TaskOutput
 
 
 def build_official_result(result_entry: dict) -> TaskOutput:
-    """將我們的結果轉換為官方格式"""
-    answer = result_entry["answer"]
-    post_history = result_entry.get("post_history", [])
+    """直接使用官方類型建構 TaskOutput
     
-    # 建立 history
-    history = []
-    for entry in post_history:
-        history.append(ChatHistoryItem(
-            role=entry["role"],
-            content=entry["content"]
-        ))
-    
+    注意：這裡不做任何格式轉換！
+    MCP 輸出的 post_history 必須已經是官方格式：
+    - role: "user" 或 "agent"
+    - content: str (POST 格式: "POST {url}\n{json}")
+    """
     return TaskOutput(
-        result=answer,
-        history=history
+        result=result_entry["answer"],
+        history=[
+            ChatHistoryItem(role=h["role"], content=h["content"])
+            for h in result_entry.get("post_history", [])
+        ]
     )
 
 
