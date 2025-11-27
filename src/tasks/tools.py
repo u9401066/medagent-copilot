@@ -346,9 +346,10 @@ def register_task_tools(mcp: FastMCP):
         # 初始化執行資料夾（在知道過濾模式後）
         task_state.init_run_folder(RESULTS_PATH, filter_suffix)
         
-        # 初始化 memory tracker，使用 run_folder 名稱作為 run_id
+        # 初始化 memory tracker，輸出到 run_folder
         run_id = task_state.run_folder.name if task_state.run_folder else None
-        get_tracker(run_id)
+        tracker = get_tracker(run_id)
+        tracker.set_output_dir(task_state.run_folder)  # 儲存到 run_folder
         
         # 統計任務類型
         task_types = {}

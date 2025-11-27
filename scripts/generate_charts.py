@@ -27,6 +27,7 @@ Note: API calls are handled by FHIR server, not counted as agent steps.
 
 import json
 import argparse
+import numpy as np
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
@@ -125,10 +126,15 @@ def load_evaluation(eval_file: Path) -> Optional[EvalResult]:
         correct = by_difficulty[diff]["correct"]
         by_difficulty[diff]["accuracy"] = (correct / total * 100) if total > 0 else 0
     
+    # 解析 overall_accuracy (可能是 "100.0%" 或 100.0)
+    overall_acc = data.get("overall_accuracy", 0)
+    if isinstance(overall_acc, str):
+        overall_acc = float(overall_acc.rstrip('%'))
+    
     return EvalResult(
         version=data.get("version", "unknown"),
         run_id=eval_file.parent.name,
-        overall_accuracy=data.get("overall_accuracy", 0),
+        overall_accuracy=overall_acc,
         by_task_type=by_task_type,
         by_difficulty=by_difficulty,
         memory_usage_rate=data.get("memory_usage_rate", 0),
@@ -138,16 +144,37 @@ def load_evaluation(eval_file: Path) -> Optional[EvalResult]:
 
 
 def load_memory_stats(run_folder: Path) -> Dict:
-    """載入記憶使用統計"""
-    memory_dir = run_folder.parent.parent / "memory_tracking"
-    run_id = run_folder.name
+    """載入記憶使用統計
     
-    stats_file = memory_dir / f"{run_id}_stats.json"
+    優先從 run_folder/memory_stats.json 讀取，
+    如果不存在則返回空統計（0 次存取）
+    """
+    # 新格式：直接在 run_folder 下
+    stats_file = run_folder / "memory_stats.json"
     if stats_file.exists():
         with open(stats_file) as f:
             return json.load(f)
     
-    return {"tasks_with_memory_access": 0, "total_tasks": 0}
+    # 舊格式：在 memory_tracking 目錄下
+    memory_dir = run_folder.parent / "memory_tracking"
+    run_id = run_folder.name
+    old_stats_file = memory_dir / f"{run_id}_stats.json"
+    if old_stats_file.exists():
+        with open(old_stats_file) as f:
+            return json.load(f)
+    
+    # 沒有記憶使用記錄 - 返回 0 次
+    return {
+        "total_tasks": 0,
+        "tasks_with_memory_access": 0,
+        "patient_memory_reads": 0,
+        "patient_memory_writes": 0,
+        "knowledge_reads": 0,
+        "constitution_reads": 0,
+        "resource_reads": 0,
+        "access_by_task_type": {},
+        "events": []
+    }
 
 
 def generate_difficulty_chart(
@@ -162,7 +189,7 @@ def generate_difficulty_chart(
     fig, ax = plt.subplots(figsize=(10, 7))
     
     difficulties = ["overall", "easy", "medium", "hard"]
-    x = range(len(difficulties))
+    x = np.arange(len(difficulties))  # 使用 numpy array
     width = 0.25
     
     colors = ['#d0d0e0', '#4040a0', '#8080c0']  # v1, v2, v2 with memory
@@ -178,7 +205,7 @@ def generate_difficulty_chart(
             values.append(result.by_difficulty.get(diff, {}).get("accuracy", 0))
         
         offset = (i - len(results)/2 + 0.5) * width
-        bars = ax.bar([xi + offset for xi in x], values, width, 
+        bars = ax.bar(x + offset, values, width, 
                       label=label, color=colors[i % len(colors)])
         
         # 標註數值
@@ -218,7 +245,7 @@ def generate_task_type_chart(
     fig, ax = plt.subplots(figsize=(14, 7))
     
     task_types = [f"task{i}" for i in range(1, 11)]
-    x = range(len(task_types))
+    x = np.arange(len(task_types))  # 使用 numpy array
     width = 0.35
     
     colors = ['#4040a0', '#8080c0']
@@ -233,7 +260,7 @@ def generate_task_type_chart(
             values.append(acc)
         
         offset = (i - len(results)/2 + 0.5) * width
-        bars = ax.bar([xi + offset for xi in x], values, width,
+        bars = ax.bar(x + offset, values, width,
                       label=label, color=colors[i % len(colors)])
         
         # 標註數值
@@ -473,7 +500,12 @@ def main():
         
     elif args.run_folder:
         # 單一執行結果
-        folder_path = Path(args.run_folder) if Path(args.run_folder).is_absolute() else results_path / args.run_folder
+        run_folder_path = Path(args.run_folder)
+        if run_folder_path.is_absolute():
+            folder_path = run_folder_path
+        else:
+            folder_path = Path.cwd() / args.run_folder
+        
         eval_file = folder_path / "evaluation.json"
         
         result = load_evaluation(eval_file)

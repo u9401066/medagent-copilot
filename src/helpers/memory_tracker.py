@@ -47,19 +47,29 @@ class MemoryUsageStats:
 class MemoryTracker:
     """記憶庫存取追蹤器"""
     
-    def __init__(self, run_id: str = None):
+    def __init__(self, run_id: str = None, output_dir: Path = None):
         """
         Args:
             run_id: 執行 ID (用於儲存追蹤記錄)
+            output_dir: 輸出目錄（如果不指定，使用 RESULTS_PATH/memory_tracking）
         """
         self.run_id = run_id or datetime.now().strftime("%Y%m%d_%H%M%S")
         self.events: List[MemoryAccessEvent] = []
         self.current_task_id: Optional[str] = None
         self.tasks_accessed: set = set()  # 有存取記憶的任務
         
-        # 追蹤檔案路徑
-        self.tracker_dir = RESULTS_PATH / f"memory_tracking"
-        self.tracker_dir.mkdir(parents=True, exist_ok=True)
+        # 追蹤檔案路徑 - 可以設定到 run_folder
+        self.output_dir = output_dir
+        self.tracker_dir = output_dir or (RESULTS_PATH / "memory_tracking")
+        if self.tracker_dir:
+            self.tracker_dir.mkdir(parents=True, exist_ok=True)
+    
+    def set_output_dir(self, output_dir: Path):
+        """設定輸出目錄（用於儲存到 run_folder）"""
+        self.output_dir = output_dir
+        self.tracker_dir = output_dir
+        if self.tracker_dir:
+            self.tracker_dir.mkdir(parents=True, exist_ok=True)
         
     def set_current_task(self, task_id: str):
         """設定當前任務 ID"""
@@ -243,16 +253,19 @@ Generated: {datetime.now().isoformat()}
             f.write(json.dumps(asdict(event), ensure_ascii=False) + "\n")
             
     def save_full_report(self, total_tasks: int = None):
-        """儲存完整報告"""
-        # 儲存統計 JSON
+        """儲存完整報告到 tracker_dir"""
+        if not self.tracker_dir:
+            return {"error": "No output directory set", "usage_rate": 0}
+            
+        # 儲存統計 JSON (直接命名 memory_stats.json)
         stats = self.get_stats(total_tasks)
-        stats_file = self.tracker_dir / f"{self.run_id}_stats.json"
+        stats_file = self.tracker_dir / "memory_stats.json"
         with open(stats_file, "w") as f:
             json.dump(asdict(stats), f, indent=2, ensure_ascii=False)
             
         # 儲存 Markdown 報告
         report = self.generate_report(total_tasks)
-        report_file = self.tracker_dir / f"{self.run_id}_report.md"
+        report_file = self.tracker_dir / "memory_report.md"
         with open(report_file, "w") as f:
             f.write(report)
             
