@@ -222,6 +222,56 @@ results/
 | 24h Filter | `ge2023-11-12T10:15:00+00:00` |
 | 1 Year Ago | `2022-11-13T10:15:00+00:00` |
 
+### Known Issues & Limitations ⚠️
+
+#### 1. MCP Resources Not Accessed by VS Code Copilot
+The project implements MCP Resources for clinical knowledge (`med://knowledge/*`), but **GitHub Copilot in VS Code does not automatically access MCP Resources** - it only calls MCP Tools.
+
+**Impact:** The rich clinical knowledge in `.med_memory/knowledge/` is not utilized during benchmark execution.
+
+**Workaround:** Knowledge hints are embedded in tool responses instead.
+
+#### 2. Patient Memory Not Utilized
+The `PatientMemory` system (`src/helpers/patient.py`) is implemented but the agent never calls `add_patient_note()` during benchmark runs.
+
+**Impact:** Important clinical observations are not persisted between tool calls.
+
+**Status:** Working as designed, but underutilized.
+
+#### 3. Large FHIR Response Truncation
+Some patients have hundreds of observations (e.g., 372 GLU records). FHIR API responses over ~100KB may be truncated.
+
+**Impact:** Latest values may be missed for data-heavy patients (observed in task7_24, task7_30).
+
+**Mitigation:** Pagination support added (`offset`/`page_size` params) but needs testing.
+
+#### 4. POST History Recording
+POST operations are recorded correctly, but the recording happens in the FHIR client layer, which may not be visible in evaluation without proper integration.
+
+### Task Difficulty Classification 📊
+
+We classify task difficulty based on **Agent processing steps** (not API calls). API queries are handled by the FHIR server and don't count as agent steps.
+
+| Task | Description | Agent Steps | Difficulty |
+|------|-------------|-------------|------------|
+| Task 1 | Patient Search | 1 (return MRN) | Easy |
+| Task 2 | Age Calculation | 2 (get patient → calc age) | Easy |
+| Task 3 | Record BP | 1 (POST BP) | Easy |
+| Task 4 | Query Magnesium | 2 (get labs → find latest) | Easy |
+| Task 5 | Mg Replacement | 3 (get Mg → check threshold → conditional POST) | Medium |
+| Task 6 | Average Glucose | 3 (get labs → filter 24h → calc average) | Medium |
+| Task 7 | Latest CBG | 3 (get patient → get labs → sort & find latest) | Medium |
+| Task 8 | Ortho Referral | 2 (compose SBAR → POST) | Easy |
+| Task 9 | K Replacement | 4 (get K → check → POST med → POST lab recheck) | Hard |
+| Task 10 | HbA1C Check | 4 (get A1C → check date/value → conditional POST → return) | Hard |
+
+**Classification Criteria:**
+- **Easy**: 1-2 agent steps
+- **Medium**: 3 agent steps  
+- **Hard**: 4+ agent steps
+
+> ⚠️ Note: This classification is our own interpretation. The official MedAgentBench paper reports average steps of 2.3±1.3 but does not provide per-task difficulty labels.
+
 ### Related Projects
 
 - **MedAgentBench**: https://github.com/stanfordmlgroup/MedAgentBench
@@ -480,6 +530,56 @@ medagent-copilot/
 ├── evaluate_with_official.py # 官方評估腳本
 └── requirements.txt
 ```
+
+### 已知問題與限制 ⚠️
+
+#### 1. MCP Resources 未被 VS Code Copilot 存取
+本專案實作了 MCP Resources 來提供臨床知識 (`med://knowledge/*`)，但 **VS Code 中的 GitHub Copilot 不會自動存取 MCP Resources** - 它只會呼叫 MCP Tools。
+
+**影響：** `.med_memory/knowledge/` 中豐富的臨床知識在基準測試執行時未被利用。
+
+**暫時解法：** 將知識提示嵌入到工具回應中。
+
+#### 2. 病患記憶未被利用
+`PatientMemory` 系統 (`src/helpers/patient.py`) 已實作，但 agent 在基準測試執行期間從未呼叫 `add_patient_note()`。
+
+**影響：** 重要的臨床觀察無法在工具呼叫之間持續保存。
+
+**狀態：** 按設計運作，但未被充分利用。
+
+#### 3. 大型 FHIR 回應被截斷
+某些病患有數百筆觀察記錄（例如 372 筆血糖記錄）。超過約 100KB 的 FHIR API 回應可能被截斷。
+
+**影響：** 資料量大的病患可能遺漏最新數值（在 task7_24、task7_30 中觀察到）。
+
+**緩解措施：** 已新增分頁支援（`offset`/`page_size` 參數），但需要測試。
+
+#### 4. POST 歷史記錄
+POST 操作被正確記錄，但記錄發生在 FHIR 客戶端層，若未正確整合可能在評估時不可見。
+
+### 任務難易度分類 📊
+
+我們根據 **Agent 處理步驟數**（非 API 呼叫）來分類任務難易度。API 查詢由 FHIR 伺服器處理，不計入 Agent 步驟。
+
+| 任務 | 說明 | Agent 步驟 | 難易度 |
+|------|------|------------|--------|
+| Task 1 | 病患搜尋 | 1 (回傳 MRN) | 簡單 |
+| Task 2 | 年齡計算 | 2 (取病患 → 算年齡) | 簡單 |
+| Task 3 | 記錄血壓 | 1 (POST 血壓) | 簡單 |
+| Task 4 | 查詢鎂離子 | 2 (取檢驗 → 找最新值) | 簡單 |
+| Task 5 | 鎂離子補充 | 3 (取 Mg → 檢查閾值 → 條件式 POST) | 中等 |
+| Task 6 | 平均血糖 | 3 (取檢驗 → 過濾 24h → 計算平均) | 中等 |
+| Task 7 | 最新血糖 | 3 (取病患 → 取檢驗 → 排序找最新) | 中等 |
+| Task 8 | 骨科轉診 | 2 (組成 SBAR → POST) | 簡單 |
+| Task 9 | 鉀離子補充 | 4 (取 K → 檢查 → POST 藥物 → POST 追蹤抽血) | 困難 |
+| Task 10 | HbA1C 檢查 | 4 (取 A1C → 檢查日期/值 → 條件式 POST → 回傳) | 困難 |
+
+**分類標準：**
+- **簡單 (Easy)**：1-2 個 Agent 步驟
+- **中等 (Medium)**：3 個 Agent 步驟
+- **困難 (Hard)**：4 個以上 Agent 步驟
+
+> ⚠️ 注意：此分類為本專案自行定義。官方 MedAgentBench 論文報告平均步驟數為 2.3±1.3，但未提供各任務難易度標籤。
 
 ### 相關專案
 

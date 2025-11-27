@@ -5,12 +5,27 @@ Patient Memory - 病人記憶管理
 1. 記憶是載入不是清空 - 遇到病人時載入該病人的歷史筆記
 2. 記憶是選擇性寫入 - 只記錄 Agent 認為重要的筆記，不是把 FHIR 搬回來
 3. 每個病人獨立檔案 - patients/{mrn}.json
+4. 存取追蹤 - 記錄所有讀寫操作供效果評估
 """
 
 import json
 from datetime import datetime
 from pathlib import Path
 from config import PATIENT_CONTEXT_PATH
+
+# 延遲導入避免循環依賴
+_memory_tracker = None
+
+def _get_tracker():
+    """延遲取得 memory_tracker"""
+    global _memory_tracker
+    if _memory_tracker is None:
+        try:
+            from helpers.memory_tracker import memory_tracker
+            _memory_tracker = memory_tracker
+        except ImportError:
+            _memory_tracker = None
+    return _memory_tracker
 
 
 class PatientMemory:
@@ -45,10 +60,12 @@ class PatientMemory:
         
         # 嘗試載入歷史記憶
         memory_file = self.patients_dir / f"{mrn}.json"
+        has_history = False
         if memory_file.exists():
             with open(memory_file) as f:
                 data = json.load(f)
                 self.notes = data.get("notes", [])
+                has_history = len(self.notes) > 0
                 # 如果沒傳 fhir_id，用歷史的
                 if not fhir_id and data.get("fhir_id"):
                     self.current_fhir_id = data["fhir_id"]
@@ -56,6 +73,15 @@ class PatientMemory:
             # 新病人 - 建立空白記憶檔案
             self.notes = []
             self._save()  # 自動建立空白檔案
+        
+        # 追蹤記憶讀取
+        tracker = _get_tracker()
+        if tracker:
+            tracker.track_read(
+                resource_name="patient_memory",
+                patient_mrn=mrn,
+                details=f"Loaded {len(self.notes)} notes, has_history={has_history}"
+            )
         
         return self.get_memory()
     
@@ -81,6 +107,16 @@ class PatientMemory:
         })
         
         self._save()
+        
+        # 追蹤記憶寫入
+        tracker = _get_tracker()
+        if tracker:
+            tracker.track_write(
+                resource_name="patient_memory",
+                patient_mrn=self.current_mrn,
+                details=f"Added note: {note[:50]}..."
+            )
+        
         return self.get_memory()
     
     def get_memory(self) -> dict:

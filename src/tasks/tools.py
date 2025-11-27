@@ -13,6 +13,7 @@ from tasks.state import task_state
 from config import MEDAGENTBENCH_PATH, MED_MEMORY_PATH, RESULTS_PATH
 from helpers import with_reminder, with_constitution
 from helpers.patient import patient_memory
+from helpers.memory_tracker import get_tracker, memory_tracker
 from fhir.client import fhir_get
 
 
@@ -345,6 +346,10 @@ def register_task_tools(mcp: FastMCP):
         # 初始化執行資料夾（在知道過濾模式後）
         task_state.init_run_folder(RESULTS_PATH, filter_suffix)
         
+        # 初始化 memory tracker，使用 run_folder 名稱作為 run_id
+        run_id = task_state.run_folder.name if task_state.run_folder else None
+        get_tracker(run_id)
+        
         # 統計任務類型
         task_types = {}
         for t in tasks:
@@ -359,6 +364,7 @@ def register_task_tools(mcp: FastMCP):
             "total_tasks": len(tasks),
             "task_types": task_types,
             "run_folder": str(task_state.run_folder),
+            "memory_tracking": "enabled",
             "message": f"Loaded {len(tasks)} tasks ({version.upper()}, {filter_mode}). Call get_next_task() to start.",
             "workflow": "get_next_task → [FHIR tools] → submit_answer → repeat",
             "⚠️ IMPORTANT": "Read the _constitution field above before proceeding!"
@@ -399,6 +405,9 @@ def register_task_tools(mcp: FastMCP):
         
         task = task_state.current_task
         task_id = task["id"]
+        
+        # 設定 memory tracker 的當前任務
+        memory_tracker.set_current_task(task_id)
         
         # 標記任務開始，清空 POST 歷史等待新記錄
         task_state.mark_task_started()
@@ -548,6 +557,7 @@ def register_task_tools(mcp: FastMCP):
         
         This calls the official refsol.py evaluation functions.
         Results are saved to evaluation.json in the run folder.
+        Also generates memory usage report.
         
         Args:
             results_file: Ignored, uses current run folder
@@ -564,6 +574,11 @@ def register_task_tools(mcp: FastMCP):
         if eval_data is None:
             return json.dumps({"error": "Evaluation failed."})
         
+        # 產生記憶使用報告
+        total_tasks = len(task_state.tasks)
+        memory_report = memory_tracker.save_full_report(total_tasks)
+        memory_usage_rate = memory_report.get("usage_rate", 0) * 100
+        
         # 找出錯誤
         incorrect = [d for d in eval_data["details"] if not d["correct"]]
         
@@ -576,10 +591,17 @@ def register_task_tools(mcp: FastMCP):
             "by_task_type": eval_data["by_task_type"],
             "incorrect_count": len(incorrect),
             "incorrect_samples": incorrect[:10],
+            "memory_usage": {
+                "usage_rate": f"{memory_usage_rate:.1f}%",
+                "tasks_with_access": len(memory_tracker.tasks_accessed),
+                "total_events": len(memory_tracker.events),
+                "report_file": memory_report.get("report_file")
+            },
             "run_folder": str(task_state.run_folder),
             "files": {
                 "agent_results": "agent_results.json",
-                "evaluation": "evaluation.json"
+                "evaluation": "evaluation.json",
+                "memory_report": memory_report.get("report_file")
             }
         }, indent=2)
     

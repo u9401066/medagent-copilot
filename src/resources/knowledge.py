@@ -2,11 +2,33 @@
 Knowledge Resources - 醫學知識與憲法暴露
 
 透過 MCP Resource 讓 LLM 可以主動讀取知識庫
+所有存取都會被追蹤以評估記憶系統效果
 """
 
 from pathlib import Path
 from mcp.server.fastmcp import FastMCP
 from config import MED_MEMORY_PATH
+
+# 延遲導入避免循環依賴
+_memory_tracker = None
+
+def _get_tracker():
+    """延遲取得 memory_tracker"""
+    global _memory_tracker
+    if _memory_tracker is None:
+        try:
+            from helpers.memory_tracker import memory_tracker
+            _memory_tracker = memory_tracker
+        except ImportError:
+            _memory_tracker = None
+    return _memory_tracker
+
+
+def _track_resource_access(resource_uri: str, details: str = None):
+    """追蹤資源存取"""
+    tracker = _get_tracker()
+    if tracker:
+        tracker.track_resource_access(resource_uri, details)
 
 
 def register_resources(mcp: FastMCP):
@@ -27,6 +49,7 @@ def register_resources(mcp: FastMCP):
         2. 記憶層架構說明
         3. 回答格式要求
         """
+        _track_resource_access("med://constitution", "Agent reading constitution")
         constitution_file = MED_MEMORY_PATH / "CONSTITUTION.md"
         if constitution_file.exists():
             return constitution_file.read_text(encoding="utf-8")
@@ -45,6 +68,7 @@ def register_resources(mcp: FastMCP):
         - 年齡計算方法
         - SBAR 格式
         """
+        _track_resource_access("med://knowledge/clinical", "Agent reading clinical knowledge")
         knowledge_file = MED_MEMORY_PATH / "knowledge" / "clinical_knowledge.md"
         if knowledge_file.exists():
             return knowledge_file.read_text(encoding="utf-8")
@@ -60,6 +84,7 @@ def register_resources(mcp: FastMCP):
         - 常用 API 路徑
         - 答案格式範例
         """
+        _track_resource_access("med://knowledge/tasks", "Agent reading task instructions")
         task_file = MED_MEMORY_PATH / "knowledge" / "task_instructions.md"
         if task_file.exists():
             return task_file.read_text(encoding="utf-8")
@@ -75,6 +100,7 @@ def register_resources(mcp: FastMCP):
         - Query 參數說明
         - POST payload 格式
         """
+        _track_resource_access("med://knowledge/fhir", "Agent reading FHIR guide")
         fhir_file = MED_MEMORY_PATH / "knowledge" / "fhir_functions.md"
         if fhir_file.exists():
             return fhir_file.read_text(encoding="utf-8")
@@ -88,6 +114,7 @@ def register_resources(mcp: FastMCP):
         包含過去成功完成的任務範例，
         可用於 few-shot learning
         """
+        _track_resource_access("med://knowledge/examples", "Agent reading task examples")
         examples_file = MED_MEMORY_PATH / "knowledge" / "task_examples.md"
         if examples_file.exists():
             return examples_file.read_text(encoding="utf-8")
@@ -103,6 +130,7 @@ def register_resources(mcp: FastMCP):
         ⚠️ 這是動態資源，內容會隨著 load_patient_context 改變
         包含當前病患的 MRN, FHIR ID 和相關資訊
         """
+        _track_resource_access("med://patient/current", "Agent reading current patient context")
         patient_file = MED_MEMORY_PATH / "patient_context" / "current_patient.json"
         if patient_file.exists():
             return patient_file.read_text(encoding="utf-8")
@@ -117,6 +145,7 @@ def register_resources(mcp: FastMCP):
         
         可用主題: clinical, tasks, fhir, examples
         """
+        _track_resource_access(f"med://knowledge/{topic}", f"Agent reading knowledge topic: {topic}")
         knowledge_dir = MED_MEMORY_PATH / "knowledge"
         
         # 主題對應檔案

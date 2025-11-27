@@ -141,11 +141,16 @@ def register_fhir_tools(mcp: FastMCP):
     async def get_lab_observations(
         patient_id: str,
         code: str,
-        date: str = None
+        date: str = None,
+        offset: int = 0
     ) -> str:
         """Get lab results for a patient.
         
         Use this to retrieve laboratory values. The code parameter is REQUIRED.
+        
+        ⚠️ PAGINATION: If response shows `has_more=true`, call again with `offset` 
+        to get remaining entries. Data is NOT sorted - you must check ALL pages 
+        to find the most recent value.
         
         Common lab codes:
         - MG: Magnesium
@@ -160,7 +165,10 @@ def register_fhir_tools(mcp: FastMCP):
             patient_id: Patient FHIR ID (for MedAgentBench, MRN works as patient_id)
             code: Lab observation code (REQUIRED) - e.g., MG, K, GLU, A1C
             date: Date filter (e.g., 'ge2023-11-12T10:15:00+00:00' for after this time)
+            offset: Starting index for pagination (default 0). Use when has_more=true.
         """
+        import json
+        
         params = {"patient": patient_id, "code": code, "_count": "5000"}
         if date:
             params["date"] = date
@@ -170,22 +178,68 @@ def register_fhir_tools(mcp: FastMCP):
         if not data or "error" in data:
             return with_reminder({"error": "Unable to fetch lab observations", "details": data})
         
-        return with_reminder(data)
+        # 分頁處理：超過 100KB 時分段回傳
+        MAX_RESPONSE_SIZE = 100 * 1024  # 100KB
+        ENTRIES_PER_PAGE = 50  # 每頁約 50 筆
+        
+        entries = data.get("entry", [])
+        total_entries = len(entries)
+        
+        if total_entries == 0:
+            return with_reminder({"total": 0, "entry": [], "message": "No observations found"})
+        
+        # 計算分頁
+        start_idx = offset
+        end_idx = min(offset + ENTRIES_PER_PAGE, total_entries)
+        
+        # 如果 offset 超出範圍
+        if start_idx >= total_entries:
+            return with_reminder({
+                "error": f"Offset {offset} exceeds total entries {total_entries}",
+                "total": total_entries
+            })
+        
+        # 取得當前頁的 entries
+        page_entries = entries[start_idx:end_idx]
+        has_more = end_idx < total_entries
+        
+        result = {
+            "resourceType": "Bundle",
+            "total": total_entries,
+            "entry": page_entries,
+            "_pagination": {
+                "offset": offset,
+                "returned": len(page_entries),
+                "has_more": has_more,
+                "next_offset": end_idx if has_more else None,
+                "remaining": total_entries - end_idx if has_more else 0
+            }
+        }
+        
+        if has_more:
+            result["_pagination"]["⚠️_WARNING"] = f"Data NOT sorted! Call with offset={end_idx} to get more entries. Check ALL pages to find most recent."
+        
+        return with_reminder(result)
     
     
     @mcp.tool()
     async def get_vital_signs(
         patient_id: str,
-        date: str = None
+        date: str = None,
+        offset: int = 0
     ) -> str:
         """Get vital signs for a patient.
         
         Use this to retrieve vital sign observations from flowsheets.
         Returns blood pressure, heart rate, temperature, etc.
         
+        ⚠️ PAGINATION: If response shows `has_more=true`, call again with `offset` 
+        to get remaining entries. Data is NOT sorted.
+        
         Args:
             patient_id: Patient FHIR ID (for MedAgentBench, MRN works as patient_id)
             date: Date range filter (e.g., 'ge2023-11-12T10:15:00+00:00')
+            offset: Starting index for pagination (default 0). Use when has_more=true.
         """
         params = {"patient": patient_id, "category": "vital-signs", "_count": "5000"}
         if date:
@@ -196,7 +250,44 @@ def register_fhir_tools(mcp: FastMCP):
         if not data or "error" in data:
             return with_reminder({"error": "Unable to fetch vital signs", "details": data})
         
-        return with_reminder(data)
+        # 分頁處理：超過時分段回傳
+        ENTRIES_PER_PAGE = 50
+        
+        entries = data.get("entry", [])
+        total_entries = len(entries)
+        
+        if total_entries == 0:
+            return with_reminder({"total": 0, "entry": [], "message": "No vital signs found"})
+        
+        start_idx = offset
+        end_idx = min(offset + ENTRIES_PER_PAGE, total_entries)
+        
+        if start_idx >= total_entries:
+            return with_reminder({
+                "error": f"Offset {offset} exceeds total entries {total_entries}",
+                "total": total_entries
+            })
+        
+        page_entries = entries[start_idx:end_idx]
+        has_more = end_idx < total_entries
+        
+        result = {
+            "resourceType": "Bundle",
+            "total": total_entries,
+            "entry": page_entries,
+            "_pagination": {
+                "offset": offset,
+                "returned": len(page_entries),
+                "has_more": has_more,
+                "next_offset": end_idx if has_more else None,
+                "remaining": total_entries - end_idx if has_more else 0
+            }
+        }
+        
+        if has_more:
+            result["_pagination"]["⚠️_WARNING"] = f"Data NOT sorted! Call with offset={end_idx} to get more entries."
+        
+        return with_reminder(result)
     
     
     @mcp.tool()
