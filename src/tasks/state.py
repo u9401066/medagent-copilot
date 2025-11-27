@@ -25,20 +25,31 @@ class TaskState:
         self.awaiting_submit = False
         self.run_folder = None  # 本次執行的資料夾
         self.run_timestamp = None  # 本次執行的時間戳
+        self.filter_suffix = None  # 過濾模式後綴（用於資料夾命名）
         # POST 歷史記錄（每個任務的 POST 列表）
         self._current_task_posts: List[dict] = []
     
-    def init_run_folder(self, base_path: Path):
+    def init_run_folder(self, base_path: Path, filter_suffix: str = None):
         """初始化本次執行的資料夾
         
         結構：
         results/
-          {version}_{timestamp}/
+          {version}_{suffix}_{timestamp}/
             agent_results.json     # Agent 提交的原始結果
             evaluation.json        # 評估結果
+        
+        Args:
+            base_path: 結果根目錄
+            filter_suffix: 過濾模式後綴 (如 "task7", "retest", "r1-100")
         """
         self.run_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        folder_name = f"{self.version}_{self.run_timestamp}"
+        self.filter_suffix = filter_suffix
+        
+        if filter_suffix:
+            folder_name = f"{self.version}_{filter_suffix}_{self.run_timestamp}"
+        else:
+            folder_name = f"{self.version}_{self.run_timestamp}"
+        
         self.run_folder = base_path / folder_name
         self.run_folder.mkdir(parents=True, exist_ok=True)
         return self.run_folder

@@ -270,15 +270,29 @@ def register_task_tools(mcp: FastMCP):
     # ============ Task Management Tools ============
     
     @mcp.tool()
-    async def load_tasks(version: str = "v1", task_type: int = None) -> str:
+    async def load_tasks(
+        version: str = "v1", 
+        task_type: int = None,
+        task_ids: list = None,
+        start_index: int = None,
+        end_index: int = None
+    ) -> str:
         """Load MedAgentBench tasks from JSON file.
         
         Call this first to load the task file. Then use get_next_task to get tasks one by one.
         Can be called again to reset and reload tasks.
         
+        Filtering options (applied in order: task_ids > task_type > range):
+        - task_ids: Load specific task IDs (e.g., ["task7_10", "task7_11", "task10_5"])
+        - task_type: Load all tasks of a type (1-10)
+        - start_index/end_index: Load a range of tasks (0-based)
+        
         Args:
             version: Test version (v1 or v2). v1 has 100 tasks, v2 has 300 tasks.
-            task_type: Optional filter for specific task type (1-10). If not specified, loads all tasks.
+            task_type: Optional filter for specific task type (1-10).
+            task_ids: Optional list of specific task IDs to load (for re-testing failed tasks).
+            start_index: Optional start index (0-based, inclusive).
+            end_index: Optional end index (0-based, exclusive).
         
         Returns:
             Summary of loaded tasks.
@@ -286,9 +300,6 @@ def register_task_tools(mcp: FastMCP):
         # 重置狀態
         task_state.reset()
         task_state.version = version
-        
-        # 初始化執行資料夾
-        task_state.init_run_folder(RESULTS_PATH)
         
         # 尋找任務檔案
         task_file = MEDAGENTBENCH_PATH / "data" / "medagentbench" / f"test_data_{version}.json"
@@ -299,13 +310,40 @@ def register_task_tools(mcp: FastMCP):
         task_state.task_file = task_file
         
         with open(task_file) as f:
-            tasks = json.load(f)
+            all_tasks = json.load(f)
         
-        # 過濾任務類型
-        if task_type:
-            tasks = [t for t in tasks if t["id"].startswith(f"task{task_type}_")]
+        # 過濾邏輯（優先順序：task_ids > task_type > range）
+        filter_suffix = None  # 用於資料夾命名
+        
+        if task_ids:
+            # 選擇特定的 task IDs（用於重跑錯誤題目）
+            task_id_set = set(task_ids)
+            tasks = [t for t in all_tasks if t["id"] in task_id_set]
+            # 保持原始順序
+            task_order = {tid: i for i, tid in enumerate(task_ids)}
+            tasks.sort(key=lambda t: task_order.get(t["id"], 999))
+            filter_mode = f"specific IDs ({len(task_ids)})"
+            filter_suffix = f"retest{len(task_ids)}"
+        elif task_type:
+            # 過濾任務類型
+            tasks = [t for t in all_tasks if t["id"].startswith(f"task{task_type}_")]
+            filter_mode = f"task{task_type}"
+            filter_suffix = f"task{task_type}"
+        elif start_index is not None or end_index is not None:
+            # 範圍過濾
+            start = start_index or 0
+            end = end_index or len(all_tasks)
+            tasks = all_tasks[start:end]
+            filter_mode = f"range [{start}:{end}]"
+            filter_suffix = f"r{start}-{end}"
+        else:
+            tasks = all_tasks
+            filter_mode = "all"
         
         task_state.tasks = tasks
+        
+        # 初始化執行資料夾（在知道過濾模式後）
+        task_state.init_run_folder(RESULTS_PATH, filter_suffix)
         
         # 統計任務類型
         task_types = {}
@@ -317,10 +355,11 @@ def register_task_tools(mcp: FastMCP):
         return with_constitution({
             "status": "success",
             "version": version,
+            "filter": filter_mode,
             "total_tasks": len(tasks),
             "task_types": task_types,
             "run_folder": str(task_state.run_folder),
-            "message": f"Loaded {len(tasks)} tasks ({version.upper()}). Call get_next_task() to start.",
+            "message": f"Loaded {len(tasks)} tasks ({version.upper()}, {filter_mode}). Call get_next_task() to start.",
             "workflow": "get_next_task → [FHIR tools] → submit_answer → repeat",
             "⚠️ IMPORTANT": "Read the _constitution field above before proceeding!"
         })
