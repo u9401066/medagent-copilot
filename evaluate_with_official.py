@@ -152,12 +152,13 @@ def main():
         if len(incorrect) > 20:
             print(f"  ... and {len(incorrect) - 20} more")
     
-    # 保存
-    eval_output = RESULTS_PATH / f"official_eval_{results_file.stem}.json"
+    # 保存到來源檔案的同一個資料夾
+    eval_output = results_file.parent / "evaluation.json"
     with open(eval_output, "w") as f:
         json.dump({
             "evaluated_at": datetime.now().isoformat(),
-            "source_file": str(results_file),
+            "source_file": results_file.name,
+            "version": version,
             "stats": stats,
             "total_correct": total_correct,
             "total_count": total_count,
