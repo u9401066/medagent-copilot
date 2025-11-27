@@ -18,11 +18,15 @@ CORE_REMINDER = """📜 ANSWER FORMAT (all must be JSON arrays):
 | task4 | [mg_float] or [-1] | [2.7] |
 | task5 | [] or [mg_value] | [1.8] |
 | task6 | [avg_float] (keep decimals!) | [89.888889] |
-| task7 | [cbg_float] | [123.0] |
+| task7 | [cbg_float] (NO time filter!) | [123.0] |
 | task9 | [] or [k_value] | [] |
 | task10 | [value, "datetime"] or [-1] | [5.9, "2023-11-09T03:05:00+00:00"] |
 
-⚠️ CRITICAL: Use json.dumps([value]) to format answer!"""
+⚠️ CRITICAL: Use json.dumps([value]) to format answer!
+
+📋 Task7: Find LATEST CBG (code=GLU) with NO date filter!
+📋 Task10: Check A1C (code=A1C) - if NO result OR date < 2022-11-13 → order + return [-1]
+           Otherwise → DO NOT order, return [value, "datetime"]"""
 
 
 def load_constitution() -> str:

@@ -466,9 +466,8 @@ medagent-copilot/
 │   ├── mcp_server.py         # MCP Server 入口
 │   ├── config.py             # 設定檔
 │   ├── fhir/                 # FHIR 工具模組
-│   │   ├── client.py         # FHIR API 客戶端
-│   │   ├── tools.py          # FHIR MCP 工具
-│   │   └── post_history.py   # POST 歷史追蹤
+│   │   ├── client.py         # FHIR API 客戶端 (含 POST 歷史追蹤)
+│   │   └── tools.py          # FHIR MCP 工具
 │   ├── tasks/                # 任務管理模組
 │   │   ├── tools.py          # 任務 MCP 工具
 │   │   └── state.py          # 任務狀態追蹤

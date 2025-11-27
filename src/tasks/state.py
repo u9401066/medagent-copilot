@@ -1,11 +1,12 @@
 """
 Task State - 任務狀態追蹤
 
-管理任務載入、進度和結果
+管理任務載入、進度、結果和 POST 歷史
 """
 
 from datetime import datetime
 from pathlib import Path
+from typing import List
 
 
 class TaskState:
@@ -24,6 +25,8 @@ class TaskState:
         self.awaiting_submit = False
         self.run_folder = None  # 本次執行的資料夾
         self.run_timestamp = None  # 本次執行的時間戳
+        # POST 歷史記錄（每個任務的 POST 列表）
+        self._current_task_posts: List[dict] = []
     
     def init_run_folder(self, base_path: Path):
         """初始化本次執行的資料夾
@@ -63,8 +66,34 @@ class TaskState:
         return max(0, len(self.tasks) - self.current_index)
     
     def mark_task_started(self):
-        """標記任務開始，等待 submit"""
+        """標記任務開始，清空 POST 歷史等待新記錄"""
         self.awaiting_submit = True
+        self._current_task_posts = []
+    
+    def record_post(self, agent_content: str, user_content: str):
+        """記錄一次 POST 操作（由 fhir_post 呼叫）
+        
+        Args:
+            agent_content: Agent 發送的內容 "POST {url}\n{json}"
+            user_content: 系統回應 "POST request accepted..."
+        """
+        self._current_task_posts.append({
+            "role": "agent",
+            "content": agent_content
+        })
+        self._current_task_posts.append({
+            "role": "user",
+            "content": user_content
+        })
+    
+    def get_current_post_history(self) -> List[dict]:
+        """取得當前任務的 POST 歷史（官方格式）"""
+        return self._current_task_posts.copy()
+    
+    def get_current_post_count(self) -> int:
+        """取得當前任務的 POST 數量"""
+        # 每次 POST 記錄兩條（agent + user）
+        return len(self._current_task_posts) // 2
     
     def add_result(self, task_id: str, answer: str, task_data: dict):
         """記錄答案
@@ -74,10 +103,9 @@ class TaskState:
             answer: 提交的答案
             task_data: 原始任務資料
         """
-        from fhir.post_history import post_history
-        
-        # 生成官方格式的 POST 歷史
-        official_history = post_history.generate_official_history(task_id)
+        # 取得當前任務的 POST 歷史
+        post_history = self.get_current_post_history()
+        post_count = self.get_current_post_count()
         
         self.results.append({
             "task_id": task_id,
@@ -86,11 +114,13 @@ class TaskState:
             "eval_MRN": task_data.get("eval_MRN"),
             "timestamp": datetime.now().isoformat(),
             # 官方評估器需要的格式
-            "post_history": official_history,
-            "post_count": post_history.get_post_count_for_task(task_id)
+            "post_history": post_history,
+            "post_count": post_count
         })
         self.current_index += 1
         self.awaiting_submit = False
+        # 清空當前任務的 POST 記錄
+        self._current_task_posts = []
 
 
 # 全域單例

@@ -67,13 +67,24 @@ Copilot 有兩種記憶可以使用：
 | task1 (查MRN) | `search_patient` | 用姓名+DOB搜尋 |
 | task2 (算年齡) | `get_patient_by_mrn` | 從 birthDate 計算到 2023-11-13 |
 | task3 (記錄BP) | `create_vital_sign` | patient_id 用 MRN |
-| task4 (查Mg) | `get_observations` | code=MG, 過濾24h |
+| task4 (查Mg) | `get_lab_observations` | code=MG, 過濾24h |
 | task5 (補Mg) | `create_medication_order` | 根據 level 決定劑量 |
-| task6 (平均CBG) | `get_observations` | code=GLU, 計算平均 |
-| task7 (最新CBG) | `get_observations` | code=GLU, 取最新 |
+| task6 (平均CBG) | `get_lab_observations` | code=GLU, 計算平均 |
+| task7 (最新CBG) | `get_lab_observations` | code=GLU, 取最新（無時間限制！）|
 | task8 (骨科轉診) | `create_service_request` | 包含 SBAR note |
 | task9 (補K+抽血) | `create_medication_order` + `create_service_request` | 兩個請求 |
-| task10 (A1C) | `get_observations` + 可能 `create_service_request` | 檢查是否>1年 |
+| task10 (A1C) | `get_lab_observations` + 可能 `create_service_request` | **詳見下方** |
+
+#### ⚠️ Task10 特別說明（A1C 檢查）：
+
+1. **查詢 A1C**：使用 `get_lab_observations(patient_id, code="A1C")` **不加日期過濾**
+2. **判斷邏輯**：
+   - 如果沒有 A1C 結果 → 下單 + 返回 `[-1]`
+   - 如果最新 A1C 時間 **< 2022-11-13T10:15:00+00:00**（超過1年）→ 下單 + 返回 `[-1]`
+   - 如果最新 A1C 時間 **>= 2022-11-13T10:15:00+00:00**（1年內）→ **不下單** + 返回 `[value, "datetime"]`
+3. **返回格式**：
+   - 需要下單：`[-1]`（並執行 create_service_request）
+   - 不需下單：`[5.9, "2023-11-09T03:05:00+00:00"]`（A1C 值 + 完整 ISO 時間）
 
 ### 3.3 答案格式規範 ⚠️ 非常重要！
 

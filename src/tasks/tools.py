@@ -14,7 +14,6 @@ from config import MEDAGENTBENCH_PATH, MED_MEMORY_PATH, RESULTS_PATH
 from helpers import with_reminder, with_constitution
 from helpers.patient import patient_memory
 from fhir.client import fhir_get
-from fhir.post_history import post_history
 
 
 def _save_results_to_file():
@@ -291,9 +290,6 @@ def register_task_tools(mcp: FastMCP):
         # 初始化執行資料夾
         task_state.init_run_folder(RESULTS_PATH)
         
-        # 清空 POST 歷史
-        post_history.clear_all()
-        
         # 尋找任務檔案
         task_file = MEDAGENTBENCH_PATH / "data" / "medagentbench" / f"test_data_{version}.json"
         
@@ -365,10 +361,7 @@ def register_task_tools(mcp: FastMCP):
         task = task_state.current_task
         task_id = task["id"]
         
-        # 設定當前任務 ID（用於 POST 歷史記錄）
-        post_history.set_current_task(task_id)
-        
-        # 標記任務開始，等待 submit
+        # 標記任務開始，清空 POST 歷史等待新記錄
         task_state.mark_task_started()
         
         return with_reminder({
@@ -426,6 +419,36 @@ def register_task_tools(mcp: FastMCP):
                 "error": f"Task ID mismatch. Expected {current_task['id']}, got {task_id}. Please check."
             })
         
+        # ⚠️ 自動修正答案格式
+        original_answer = answer
+        corrected = False
+        
+        # 嘗試解析答案，檢查是否為有效的 JSON 陣列
+        try:
+            parsed = json.loads(answer)
+            if not isinstance(parsed, list):
+                # 不是陣列，包成陣列
+                answer = json.dumps([parsed])
+                corrected = True
+        except json.JSONDecodeError:
+            # 解析失敗，可能是純數字或字串
+            answer_stripped = answer.strip()
+            
+            # 嘗試解析為數字
+            try:
+                num = float(answer_stripped)
+                # 如果是整數（task2），轉為 int
+                if num == int(num) and task_id.startswith("task2"):
+                    answer = json.dumps([int(num)])
+                else:
+                    answer = json.dumps([num])
+                corrected = True
+            except ValueError:
+                # 不是數字，當作字串處理
+                if not answer_stripped.startswith("["):
+                    answer = json.dumps([answer_stripped])
+                    corrected = True
+        
         # 記錄答案
         task_state.add_result(task_id, answer, current_task)
         
@@ -434,14 +457,22 @@ def register_task_tools(mcp: FastMCP):
         
         remaining = task_state.remaining
         
-        return with_reminder({
+        result = {
             "status": "recorded",
             "task_id": task_id,
             "answer": answer,
             "progress": f"{task_state.current_index}/{len(task_state.tasks)}",
             "remaining": remaining,
             "next_action": "get_next_task()" if remaining > 0 else "evaluate_results()"
-        })
+        }
+        
+        # 如果有修正，加入提示
+        if corrected:
+            result["⚠️_auto_corrected"] = True
+            result["original_answer"] = original_answer
+            result["corrected_to"] = answer
+        
+        return with_reminder(result)
     
     
     @mcp.tool()
