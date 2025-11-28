@@ -4,6 +4,38 @@
 
 ---
 
+## 🏆 Benchmark Results / 基準測試結果
+
+### MedAgentBench V2 (300 Tasks) - **98.3% Accuracy**
+
+| Task Type | Description | Accuracy | Status |
+|-----------|-------------|----------|--------|
+| Task 1 | Patient Search | 30/30 (100%) | ✅ |
+| Task 2 | Age Calculation | 30/30 (100%) | ✅ |
+| Task 3 | Record Blood Pressure | 30/30 (100%) | ✅ |
+| Task 4 | Query Magnesium | 30/30 (100%) | ✅ |
+| Task 5 | Mg Replacement | 30/30 (100%) | ✅ |
+| Task 6 | Average Glucose | 30/30 (100%) | ✅ |
+| Task 7 | Latest CBG | 29/30 (96.7%) | ⚠️ |
+| Task 8 | Ortho Referral | 30/30 (100%) | ✅ |
+| Task 9 | K Replacement | 30/30 (100%) | ✅ |
+| Task 10 | HbA1C Check | 26/30 (86.7%) | ⚠️ |
+| **Total** | | **295/300 (98.3%)** | 🏆 |
+
+### Results by Task Type / 各任務類型準確率
+
+![Task Type Accuracy](results/v2_20251127_212627/task_type_chart.png)
+
+### Results by Difficulty / 各難易度準確率
+
+![Difficulty Chart](results/v2_20251127_212627/difficulty_chart.png)
+
+> **Tested with:** Claude Opus 4.5 (Preview) via VS Code GitHub Copilot  
+> **Run Date:** 2025-11-27  
+> **Run Folder:** `results/v2_20251127_212627`
+
+---
+
 ## English
 
 ### Overview
